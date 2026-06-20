@@ -133,11 +133,6 @@ const NODE_POS: Record<string, { x: number; y: number }> = {
 const NODE_W = 120
 const NODE_H = 36
 
-function nodeCenter(id: string) {
-  const p = NODE_POS[id] ?? { x: 0, y: 0 }
-  return { cx: p.x + NODE_W / 2, cy: p.y + NODE_H / 2 }
-}
-
 function masteryColor(score: number | undefined): string {
   if (score === undefined) return '#374151' // gray-700, not assessed
   if (score >= 0.9) return '#166534'        // green-800
@@ -216,6 +211,38 @@ function inlineMarkdown(text: string): React.ReactNode[] {
     }
     return part
   })
+}
+
+function stripMarkdownForTTS(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/##\s*/g, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\|[^\n]+\|/g, '')
+    .replace(/\n+/g, '. ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function computeNodePositions(nodes: GraphNode[]): Record<string, { x: number; y: number }> {
+  const byDiff: Record<number, GraphNode[]> = {}
+  for (const n of nodes) {
+    const d = n.difficulty ?? 1
+    if (!byDiff[d]) byDiff[d] = []
+    byDiff[d].push(n)
+  }
+  const positions: Record<string, { x: number; y: number }> = {}
+  const tiers = Object.keys(byDiff).map(Number).sort()
+  tiers.forEach((tier, ti) => {
+    const row = byDiff[tier]
+    const y = 30 + ti * 90
+    const gapX = 660 / (row.length + 1)
+    row.forEach((node, ni) => {
+      positions[node.id] = { x: Math.round(gapX * (ni + 1)) - NODE_W / 2, y }
+    })
+  })
+  return positions
 }
 
 // ---------------------------------------------------------------------------
@@ -373,12 +400,30 @@ function ConceptGraph({
   selectedId: string | null
   onSelect: (id: string) => void
 }) {
+  // Pre-defined positions for SQL nodes; auto-layout fallback for any other course
+  const effectivePos = useMemo(() => {
+    const computed = computeNodePositions(graphData.nodes)
+    const result: Record<string, { x: number; y: number }> = {}
+    for (const n of graphData.nodes) {
+      result[n.id] = NODE_POS[n.id] ?? computed[n.id]
+    }
+    return result
+  }, [graphData.nodes])
+
+  const getCenter = (id: string) => {
+    const p = effectivePos[id] ?? { x: 0, y: 0 }
+    return { cx: p.x + NODE_W / 2, cy: p.y + NODE_H / 2 }
+  }
+
+  const maxY = Math.max(...Object.values(effectivePos).map(p => p.y), 30)
+  const svgH = maxY + NODE_H + 60
+
   return (
     <div className="overflow-auto rounded-xl border border-gray-800 bg-gray-900 p-3">
       <div className="text-xs text-gray-500 mb-2 px-1">
         Gap heatmap — red nodes are your weakest concepts. Click any to start learning.
       </div>
-      <svg width={660} height={480} className="select-none">
+      <svg width={660} height={svgH} className="select-none">
         <defs>
           <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
             <polygon points="0 0, 8 3, 0 6" fill="#4B5563" />
@@ -387,8 +432,8 @@ function ConceptGraph({
 
         {/* Edges */}
         {graphData.edges.map((edge, i) => {
-          const s = nodeCenter(edge.from)
-          const t = nodeCenter(edge.to)
+          const s = getCenter(edge.from)
+          const t = getCenter(edge.to)
           const dy = t.cy - s.cy
           const cpOffset = Math.abs(dy) * 0.4
           const d = `M${s.cx},${s.cy + NODE_H / 2} C${s.cx},${s.cy + NODE_H / 2 + cpOffset} ${t.cx},${t.cy - cpOffset} ${t.cx},${t.cy - NODE_H / 2 - 4}`
@@ -399,7 +444,7 @@ function ConceptGraph({
 
         {/* Nodes */}
         {graphData.nodes.map(node => {
-          const pos = NODE_POS[node.id]
+          const pos = effectivePos[node.id]
           if (!pos) return null
           const score = mastery[node.id]
           const isSelected = selectedId === node.id
@@ -709,13 +754,13 @@ function ProveItPanel({
         )}
       </div>
 
-      {/* SQL input */}
+      {/* Answer input */}
       <div className="flex flex-col gap-2">
-        <label className="text-xs text-gray-500">Your SQL</label>
+        <label className="text-xs text-gray-500">Your answer</label>
         <textarea
           value={sql}
           onChange={e => setSql(e.target.value)}
-          placeholder="SELECT ..."
+          placeholder="Type your answer…"
           rows={5}
           className="w-full bg-gray-950 border border-gray-700 rounded-lg p-3 text-sm text-green-300 font-mono resize-y focus:outline-none focus:border-blue-600 placeholder-gray-700"
         />
@@ -741,10 +786,10 @@ const PROFILE_OPTIONS = {
   format: ['worked_example', 'analogy', 'step_by_step'],
 }
 
-const FORMAT_LABELS: Record<string, string> = {
-  worked_example: 'Worked example',
-  analogy: 'Analogy first',
-  step_by_step: 'Step-by-step',
+const PROFILE_LABELS: Record<string, Record<string, string>> = {
+  depth: { simpler: 'Simpler', standard: 'Standard', deeper: 'Deep dive' },
+  example_domain: { ecommerce: 'E-commerce', sports: 'Sports', finance: 'Finance' },
+  format: { worked_example: 'Worked eg.', analogy: 'Analogy', step_by_step: 'Step-by-step' },
 }
 
 function LessonPanel({
@@ -769,11 +814,17 @@ function LessonPanel({
   const [lesson, setLesson] = useState<LessonData | null>(null)
   const [loading, setLoading] = useState(false)
   const [rerenderLoading, setRerenderLoading] = useState(false)
+  const [rerenderFlash, setRerenderFlash] = useState(false)
+  const [speaking, setSpeaking] = useState(false)
+  const ttsAvailable = typeof window !== 'undefined' && 'speechSynthesis' in window
 
   // Fetch fresh lesson when concept changes
   useEffect(() => {
     setLesson(null)
     setLoading(true)
+    setRerenderFlash(false)
+    if (ttsAvailable) window.speechSynthesis.cancel()
+    setSpeaking(false)
     fetch('/api/lesson', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -785,11 +836,20 @@ function LessonPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conceptId])
 
+  // Cancel TTS when switching tabs
+  useEffect(() => {
+    if (ttsAvailable) window.speechSynthesis.cancel()
+    setSpeaking(false)
+  }, [activeTab, ttsAvailable])
+
   // Re-render when profile changes (after initial load)
   const rerender = useCallback(
     (newProfile: Profile) => {
       if (!lesson) return
       setRerenderLoading(true)
+      setRerenderFlash(false)
+      if (ttsAvailable) window.speechSynthesis.cancel()
+      setSpeaking(false)
       fetch('/api/lesson/rerender', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -800,10 +860,14 @@ function LessonPanel({
         }),
       })
         .then(r => r.json())
-        .then(data => setLesson(data))
+        .then(data => {
+          setLesson(data)
+          setRerenderFlash(true)
+          setTimeout(() => setRerenderFlash(false), 2000)
+        })
         .finally(() => setRerenderLoading(false))
     },
-    [lesson, conceptId],
+    [lesson, conceptId, ttsAvailable],
   )
 
   const updateProfile = useCallback(
@@ -815,9 +879,39 @@ function LessonPanel({
     [profile, rerender],
   )
 
+  const handleTTS = useCallback(() => {
+    if (!lesson || !ttsAvailable) return
+    if (speaking) {
+      window.speechSynthesis.cancel()
+      setSpeaking(false)
+      return
+    }
+    const text = stripMarkdownForTTS(lesson.lesson)
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.rate = 0.92
+    utterance.onend = () => setSpeaking(false)
+    utterance.onerror = () => setSpeaking(false)
+
+    const speak = () => {
+      const voices = window.speechSynthesis.getVoices()
+      const tamilVoice = voices.find(v => v.lang.startsWith('ta'))
+      if (tamilVoice) {
+        utterance.voice = tamilVoice
+        utterance.lang = 'ta-IN'
+      }
+      setSpeaking(true)
+      window.speechSynthesis.speak(utterance)
+    }
+
+    if (window.speechSynthesis.getVoices().length === 0) {
+      window.speechSynthesis.addEventListener('voiceschanged', speak, { once: true })
+    } else {
+      speak()
+    }
+  }, [lesson, speaking, ttsAvailable])
+
   const diffStars = '★'.repeat(difficulty) + '☆'.repeat(5 - difficulty)
 
-  // Mastery badge for header
   const conceptScore = mastery[conceptId]
   const masteryTierLabel =
     conceptScore === undefined ? null
@@ -865,32 +959,61 @@ function LessonPanel({
           </button>
         </div>
 
-        {/* Preference controls — only shown on lesson tab */}
+        {/* Preference pills + TTS — only on lesson tab */}
         {activeTab === 'lesson' && (
-          <>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {(Object.keys(PROFILE_OPTIONS) as Array<keyof typeof PROFILE_OPTIONS>).map(key => (
-                <div key={key} className="flex flex-col gap-0.5">
-                  <label className="text-gray-500 text-xs capitalize">{key.replace('_', ' ')}</label>
-                  <select
-                    value={profile[key as keyof Profile]}
-                    onChange={e => updateProfile(key as keyof Profile, e.target.value)}
-                    disabled={loading || !lesson}
-                    className="bg-gray-800 border border-gray-600 text-gray-200 text-xs rounded px-2 py-1 disabled:opacity-50"
-                  >
-                    {PROFILE_OPTIONS[key].map(opt => (
-                      <option key={opt} value={opt}>
-                        {key === 'format' ? FORMAT_LABELS[opt] ?? opt : opt}
-                      </option>
-                    ))}
-                  </select>
+          <div className="mt-2 space-y-1.5">
+            {(Object.keys(PROFILE_OPTIONS) as Array<keyof typeof PROFILE_OPTIONS>).map(key => (
+              <div key={key} className="flex items-center gap-1.5">
+                <span className="text-gray-600 text-xs w-14 shrink-0 capitalize">
+                  {key === 'example_domain' ? 'domain' : key}
+                </span>
+                <div className="flex gap-1 flex-wrap">
+                  {PROFILE_OPTIONS[key].map(opt => {
+                    const active = profile[key as keyof Profile] === opt
+                    return (
+                      <button
+                        key={opt}
+                        onClick={() => updateProfile(key as keyof Profile, opt)}
+                        disabled={loading || !lesson || rerenderLoading}
+                        className={`px-2 py-0.5 text-xs rounded-full font-medium transition-all ${
+                          active
+                            ? 'bg-blue-600 text-white shadow-sm shadow-blue-900'
+                            : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                        } disabled:opacity-40`}
+                      >
+                        {PROFILE_LABELS[key]?.[opt] ?? opt}
+                      </button>
+                    )
+                  })}
                 </div>
-              ))}
+              </div>
+            ))}
+
+            <div className="flex items-center gap-2 pt-0.5">
+              {rerenderLoading && (
+                <span className="flex items-center gap-1 text-xs text-blue-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block animate-ping" />
+                  Adapting…
+                </span>
+              )}
+              {rerenderFlash && !rerenderLoading && (
+                <span className="text-xs text-green-400 font-medium">✓ Adapted</span>
+              )}
+              {ttsAvailable && lesson && !loading && (
+                <button
+                  onClick={handleTTS}
+                  title={speaking ? 'Stop reading' : 'Read aloud (Tamil voice if available)'}
+                  className={`ml-auto flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium transition ${
+                    speaking
+                      ? 'bg-blue-700 text-white animate-pulse'
+                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                  }`}
+                >
+                  {speaking ? '⏹ Stop' : '🔊 Read aloud'}
+                </button>
+              )}
             </div>
-            {rerenderLoading && (
-              <div className="mt-2 text-xs text-blue-400 animate-pulse">Re-rendering lesson…</div>
-            )}
-          </>
+          </div>
         )}
       </div>
 
@@ -924,7 +1047,11 @@ function LessonPanel({
                 </div>
               )}
 
-              <div className="lesson-body opacity-100">
+              <div
+                className={`lesson-body transition-all duration-300 ${
+                  rerenderLoading ? 'opacity-30 blur-[1px]' : 'opacity-100 blur-0'
+                }`}
+              >
                 {renderMarkdown(lesson.lesson)}
               </div>
 

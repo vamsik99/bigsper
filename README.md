@@ -87,7 +87,7 @@ Corpus lives in `courses/sql/corpus/` — add chunked text or markdown files bef
 
 ## Team
 
-Vamsi Krishnamurthy — built in 24 hours.
+Vamsi Krishna and Shivani Balakrishna
 
 ## ATTRIBUTIONS
 

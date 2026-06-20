@@ -50,6 +50,17 @@ async def verify_task(task_id: str, submission: str) -> dict[str, Any]:
     Returns a scorecard: badge (from course.badge), deterministic signals/evidence,
     and an LLM-generated coaching narrative.
     """
+    if not submission or not submission.strip():
+        return {
+            "passed": False,
+            "score": 0.0,
+            "badge": {"label": "Not submitted", "color": "gray", "icon": "—"},
+            "signals": "No SQL submitted. Please write a query and try again.",
+            "evidence": {"expected_rows": [], "actual_rows": []},
+            "narrative": "Please enter a SQL query before submitting.",
+            "error": None,
+        }
+
     course = get_active()
     task = _tasks.get(task_id)
     if task is None:

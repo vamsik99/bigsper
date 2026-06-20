@@ -67,6 +67,8 @@ async def lifespan(_app: FastAPI):
     import backend.llm as llm
     from backend.course import get_active
     from backend.engine import rag
+    from backend.engine import tasks as _tasks_mod
+    from backend.engine.demo_cache import DEMO_TASK_ID, DEMO_TASK_DATA
 
     _load_active_manifest()
     course = get_active()
@@ -75,8 +77,16 @@ async def lifespan(_app: FastAPI):
     concept_count = len(course.graph.get("nodes", []))
     logger.info("concept graph: %d nodes", concept_count)
 
+    # Register demo task so SQLite verification works even when providers are down
+    _tasks_mod._tasks[DEMO_TASK_ID] = DEMO_TASK_DATA
+    logger.info("demo task registered: %s", DEMO_TASK_ID)
+
     # Build / refresh RAG index from corpus
-    chroma_chunks = await rag.build_index(course.corpus_dir, course.id)
+    try:
+        chroma_chunks = await rag.build_index(course.corpus_dir, course.id)
+    except Exception as exc:
+        logger.warning("RAG index build failed (degraded mode): %s", exc)
+        chroma_chunks = 0
 
     # SQLite sandbox ping
     sqlite_info = _sqlite_ping(course)
@@ -140,6 +150,14 @@ def _redirect_uri(request: Request) -> str:
     )
 
 
+def _provider_error_response(detail: str) -> dict:
+    """Friendly 200 response for provider outages — never returns 500 to the frontend."""
+    return {
+        "error": detail,
+        "_provider_outage": True,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Auth endpoints (no-ops when AUTH_ENABLED=false or ScaleKit unavailable)
 # ---------------------------------------------------------------------------
@@ -155,7 +173,11 @@ async def auth_status(request: Request):
 @app.get("/auth/login")
 async def auth_login(request: Request):
     """Redirect browser to ScaleKit hosted login. Falls back to / if auth not active."""
-    login_url = _auth.get_login_url(_redirect_uri(request))
+    try:
+        login_url = _auth.get_login_url(_redirect_uri(request))
+    except Exception as exc:
+        logger.warning("auth/login error: %s", exc)
+        return RedirectResponse("/?auth_error=login_failed")
     if not login_url:
         return RedirectResponse("/?auth_error=disabled")
     return RedirectResponse(login_url)
@@ -166,7 +188,11 @@ async def auth_callback(request: Request, code: str = ""):
     """Exchange ScaleKit auth code, set session cookie, redirect to frontend."""
     if not code:
         return RedirectResponse("/?auth_error=no_code")
-    user_info = _auth.exchange_code(code, _redirect_uri(request))
+    try:
+        user_info = _auth.exchange_code(code, _redirect_uri(request))
+    except Exception as exc:
+        logger.warning("auth/callback error: %s", exc)
+        return RedirectResponse("/?auth_error=exchange_failed")
     if not user_info:
         return RedirectResponse("/?auth_error=exchange_failed")
     token = _auth.create_session(user_info)
@@ -186,7 +212,10 @@ async def auth_logout(request: Request):
     """Clear session cookie and redirect to frontend."""
     token = request.cookies.get("bigsper_session")
     if token:
-        _auth.delete_session(token)
+        try:
+            _auth.delete_session(token)
+        except Exception:
+            pass
     resp = RedirectResponse("/")
     resp.delete_cookie("bigsper_session")
     return resp
@@ -236,50 +265,117 @@ class RerenderRequest(BaseModel):
 @app.get("/graph")
 async def graph_data():
     """Return the active course concept graph (nodes + edges)."""
-    from backend.course import get_active
-    return get_active().graph
+    try:
+        from backend.course import get_active
+        return get_active().graph
+    except Exception as exc:
+        logger.error("graph endpoint failed: %s", exc)
+        return {"nodes": [], "edges": [], "error": str(exc)}
 
 
 @app.get("/profile_dimensions")
 async def profile_dimensions():
     """Return the available profile dimension options."""
-    from backend.engine import lessons
-    return lessons.get_profile_dimensions()
+    try:
+        from backend.engine import lessons
+        return lessons.get_profile_dimensions()
+    except Exception as exc:
+        logger.warning("profile_dimensions failed: %s", exc)
+        return {
+            "depth": ["simpler", "standard", "deeper"],
+            "example_domain": ["ecommerce", "sports", "finance"],
+            "format": ["worked_example", "analogy", "step_by_step"],
+        }
 
 
 @app.post("/lesson")
 async def lesson(body: LessonRequest):
     """
     Retrieve corpus chunks for concept_id and generate a grounded micro-lesson.
-    Response includes sources used for citation.
+    Response includes sources used for citation. Falls back to demo cache on outage.
     """
+    if not body.concept_id or not body.concept_id.strip():
+        raise HTTPException(status_code=422, detail="concept_id must not be empty")
+
     from backend.engine import lessons
-    result = await lessons.fetch_lesson(body.concept_id, body.profile)
-    return result
+    from backend.engine.demo_cache import DEMO_LESSON_RESPONSE
+    try:
+        return await lessons.fetch_lesson(body.concept_id, body.profile)
+    except Exception as exc:
+        logger.warning("lesson failed for %r (%s) — serving cache", body.concept_id, exc)
+        if body.concept_id == DEMO_LESSON_RESPONSE["concept_id"]:
+            cached = dict(DEMO_LESSON_RESPONSE)
+            cached["profile"] = body.profile
+            return cached
+        return {
+            "concept_id": body.concept_id,
+            "lesson": (
+                "**Lesson temporarily unavailable** — AI provider is unreachable.\n\n"
+                "Please try again in a moment, or continue to the Prove It tab to "
+                "practice with the SQL exercise."
+            ),
+            "sources": [],
+            "profile": body.profile,
+            "no_corpus": True,
+            "_from_cache": True,
+        }
 
 
 @app.post("/lesson/rerender")
 async def lesson_rerender(body: RerenderRequest):
     """
     Re-render the lesson for concept_id with a new profile.
-    Pass sources from a previous /lesson response to skip re-retrieval.
+    Falls back to cache on provider outage.
     """
+    if not body.concept_id or not body.concept_id.strip():
+        raise HTTPException(status_code=422, detail="concept_id must not be empty")
+
     from backend.engine import lessons
-    result = await lessons.rerender_lesson(body.concept_id, body.profile, body.sources)
-    return result
+    from backend.engine.demo_cache import DEMO_LESSON_RESPONSE
+    try:
+        return await lessons.rerender_lesson(body.concept_id, body.profile, body.sources)
+    except Exception as exc:
+        logger.warning("lesson/rerender failed for %r (%s) — serving cache", body.concept_id, exc)
+        if body.concept_id == DEMO_LESSON_RESPONSE["concept_id"]:
+            cached = dict(DEMO_LESSON_RESPONSE)
+            cached["profile"] = body.profile
+            return cached
+        return {
+            "concept_id": body.concept_id,
+            "lesson": (
+                "**Re-render temporarily unavailable** — AI provider is unreachable.\n\n"
+                "The lesson shown above is the last successfully generated version."
+            ),
+            "sources": body.sources or [],
+            "profile": body.profile,
+            "no_corpus": False,
+            "_from_cache": True,
+        }
 
 
 @app.post("/task/generate")
 async def task_generate(body: TaskGenerateRequest):
     """
     Generate a practice task for the given weak concepts.
-    Returns task_id + prompt + schema context (no reference solution).
+    Falls back to demo cache task on provider outage.
     """
+    if not body.weak_concepts:
+        raise HTTPException(status_code=422, detail="weak_concepts must not be empty")
+
     from backend.engine import tasks
+    from backend.engine.demo_cache import DEMO_TASK_RESPONSE, DEMO_TASK_ID
     try:
         return await tasks.generate_task(body.weak_concepts)
     except NotImplementedError as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.warning("task/generate failed (%s) — serving demo cache task", exc)
+        cached = dict(DEMO_TASK_RESPONSE)
+        # Use first requested concept if available, keeps UI coherent
+        if body.weak_concepts:
+            cached = dict(DEMO_TASK_RESPONSE)
+            cached["concept_id"] = body.weak_concepts[0]
+        return cached
 
 
 @app.post("/task/verify")
@@ -288,11 +384,25 @@ async def task_verify(body: TaskVerifyRequest):
     Grade a submission against the stored reference solution.
     Returns scorecard: passed, score, badge, signals, evidence, narrative.
     """
+    if not body.task_id or not body.task_id.strip():
+        raise HTTPException(status_code=422, detail="task_id must not be empty")
+
     from backend.engine import tasks
     try:
         return await tasks.verify_task(body.task_id, body.submission)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("task/verify failed: %s", exc)
+        return {
+            "passed": False,
+            "score": 0.0,
+            "badge": {"label": "Verification error", "color": "gray", "icon": "!"},
+            "signals": f"Verification encountered an error: {exc}",
+            "evidence": {"expected_rows": [], "actual_rows": []},
+            "narrative": "An error occurred while grading. Please try again.",
+            "error": str(exc),
+        }
 
 
 @app.post("/scorecard")
@@ -300,14 +410,41 @@ async def scorecard_endpoint(body: ScorecardRequest):
     """
     Grade a submission and return a unified scorecard combining the diagnostic
     mastery score for the concept with the prove-it result (badge, evidence, narrative).
+    Falls back to a graceful error response on failure.
     """
+    if not body.task_id or not body.task_id.strip():
+        raise HTTPException(status_code=422, detail="task_id must not be empty")
+
     from backend.engine import tasks
     from backend.engine import scorecard as sc
     try:
         verify_result = await tasks.verify_task(body.task_id, body.submission)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return sc.build(body.concept_id, body.mastery, verify_result)
+    except Exception as exc:
+        logger.error("scorecard verify_task failed: %s", exc)
+        return {
+            "concept_id": body.concept_id,
+            "diagnostic": {"score": None, "tier": "unknown", "label": "—"},
+            "prove_it": {
+                "passed": False,
+                "score": 0.0,
+                "badge": {"label": "Error", "color": "gray", "icon": "!"},
+                "signals": f"Grading error: {exc}",
+                "evidence": {"expected_rows": [], "actual_rows": []},
+                "narrative": "An error occurred while grading. Please try again.",
+                "error": str(exc),
+            },
+        }
+    try:
+        return sc.build(body.concept_id, body.mastery, verify_result)
+    except Exception as exc:
+        logger.error("scorecard build failed: %s", exc)
+        return {
+            "concept_id": body.concept_id,
+            "diagnostic": {"score": None, "tier": "unknown", "label": "—"},
+            "prove_it": verify_result,
+        }
 
 
 @app.post("/faculty/report")
@@ -318,21 +455,34 @@ async def faculty_report(request: Request):
         user = _auth.get_session(token)
         if not user or user.get("role") != "faculty":
             raise HTTPException(status_code=403, detail="Faculty role required")
-    from backend.engine import faculty
-    return faculty.build_report()
+    try:
+        from backend.engine import faculty
+        return faculty.build_report()
+    except Exception as exc:
+        logger.error("faculty/report failed: %s", exc)
+        return {
+            "error": "Report generation failed. Please try again.",
+            "students": [],
+            "cohort_mastery": {},
+        }
 
 
 @app.post("/diagnostic/start")
 async def diagnostic_start():
-    """Begin a new adaptive diagnostic session. Returns session_id + first question."""
+    """Begin a new adaptive diagnostic session. Falls back to demo cache on LLM failure."""
     from backend.engine import diagnostic
-    session_id, question = await diagnostic.start_session()
-    return {
-        "session_id": session_id,
-        "question_number": 1,
-        "question": question.model_dump(),
-        "done": False,
-    }
+    from backend.engine.demo_cache import DEMO_DIAGNOSTIC_RESPONSE
+    try:
+        session_id, question = await diagnostic.start_session()
+        return {
+            "session_id": session_id,
+            "question_number": 1,
+            "question": question.model_dump(),
+            "done": False,
+        }
+    except Exception as exc:
+        logger.warning("diagnostic/start failed (%s) — serving demo cache question", exc)
+        return DEMO_DIAGNOSTIC_RESPONSE
 
 
 @app.post("/diagnostic/answer")
@@ -340,14 +490,34 @@ async def diagnostic_answer(body: AnswerRequest):
     """
     Submit an answer to the current question.
     Returns next question, or mastery map when the session completes.
+    On session-not-found (e.g. cache session), completes with pre-baked mastery.
     """
+    if body.answer_index < 0 or body.answer_index > 10:
+        raise HTTPException(status_code=422, detail="answer_index must be a non-negative integer")
+
     from backend.engine import diagnostic
+    from backend.engine.demo_cache import DEMO_GRADE, DEMO_MASTERY
     try:
         grade, next_q, mastery = await diagnostic.record_and_advance(
             body.session_id, body.answer_index
         )
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except KeyError:
+        # Session not found — cache session or expired; end gracefully
+        logger.info("diagnostic/answer: session %r not found — ending with cache mastery", body.session_id)
+        return {
+            "grade": DEMO_GRADE,
+            "done": True,
+            "mastery": DEMO_MASTERY,
+            "_from_cache": True,
+        }
+    except Exception as exc:
+        logger.warning("diagnostic/answer failed (%s) — ending with cache mastery", exc)
+        return {
+            "grade": DEMO_GRADE,
+            "done": True,
+            "mastery": DEMO_MASTERY,
+            "_from_cache": True,
+        }
 
     response: dict = {"grade": grade.model_dump()}
     if mastery is not None:

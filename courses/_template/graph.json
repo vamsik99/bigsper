@@ -1,0 +1,19 @@
+{
+  "nodes": [
+    {
+      "id": "concept_a",
+      "label": "Concept A",
+      "description": "Description of concept A",
+      "difficulty": 1
+    },
+    {
+      "id": "concept_b",
+      "label": "Concept B",
+      "description": "Description of concept B (requires Concept A)",
+      "difficulty": 2
+    }
+  ],
+  "edges": [
+    { "from": "concept_a", "to": "concept_b" }
+  ]
+}

@@ -1,0 +1,146 @@
+{
+  "nodes": [
+    {
+      "id": "data_types",
+      "label": "Data Types",
+      "description": "Numeric, text, date/time types; type coercion; NULL semantics",
+      "difficulty": 1
+    },
+    {
+      "id": "select_basics",
+      "label": "SELECT Basics",
+      "description": "Retrieving rows and columns; column aliases; SELECT *; DISTINCT",
+      "difficulty": 1
+    },
+    {
+      "id": "filtering",
+      "label": "Filtering with WHERE",
+      "description": "Comparison and logical operators; NULL handling with IS NULL; IN, BETWEEN, LIKE",
+      "difficulty": 1
+    },
+    {
+      "id": "sorting",
+      "label": "ORDER BY & LIMIT",
+      "description": "Sorting result sets; ascending/descending; LIMIT and OFFSET for pagination",
+      "difficulty": 1
+    },
+    {
+      "id": "aggregation",
+      "label": "Aggregate Functions",
+      "description": "COUNT, SUM, AVG, MIN, MAX; DISTINCT in aggregates; NULL in aggregation",
+      "difficulty": 2
+    },
+    {
+      "id": "grouping",
+      "label": "GROUP BY & HAVING",
+      "description": "Grouping rows into buckets; filtering groups with HAVING vs filtering rows with WHERE",
+      "difficulty": 2
+    },
+    {
+      "id": "dml",
+      "label": "DML — INSERT / UPDATE / DELETE",
+      "description": "Modifying data; UPSERT / ON CONFLICT; returning affected rows",
+      "difficulty": 2
+    },
+    {
+      "id": "inner_join",
+      "label": "INNER JOIN",
+      "description": "Joining two tables on a matching key; equi-joins; multi-table joins",
+      "difficulty": 2
+    },
+    {
+      "id": "outer_join",
+      "label": "Outer JOINs",
+      "description": "LEFT, RIGHT, FULL OUTER JOIN; NULL-extended rows; finding unmatched records",
+      "difficulty": 3
+    },
+    {
+      "id": "self_join",
+      "label": "Self JOIN",
+      "description": "Joining a table to itself; modeling hierarchies; table aliasing",
+      "difficulty": 3
+    },
+    {
+      "id": "subqueries",
+      "label": "Subqueries",
+      "description": "Scalar, row, and table subqueries; correlated subqueries; EXISTS and IN",
+      "difficulty": 3
+    },
+    {
+      "id": "set_ops",
+      "label": "Set Operations",
+      "description": "UNION, INTERSECT, EXCEPT / MINUS; deduplication rules; column alignment",
+      "difficulty": 3
+    },
+    {
+      "id": "schema_design",
+      "label": "Schema Design",
+      "description": "Primary and foreign keys; referential integrity; ON DELETE / ON UPDATE actions",
+      "difficulty": 3
+    },
+    {
+      "id": "cte",
+      "label": "CTEs",
+      "description": "WITH clause; multi-step readable queries; recursive CTEs for hierarchies",
+      "difficulty": 4
+    },
+    {
+      "id": "window_basics",
+      "label": "Window Functions — Basics",
+      "description": "OVER(); ROW_NUMBER, RANK, DENSE_RANK; PARTITION BY; ORDER BY inside a frame",
+      "difficulty": 4
+    },
+    {
+      "id": "normalization",
+      "label": "Normalization",
+      "description": "1NF–3NF / BCNF; functional dependencies; trade-offs with denormalization",
+      "difficulty": 4
+    },
+    {
+      "id": "indexes",
+      "label": "Indexes & Query Plans",
+      "description": "B-tree vs hash indexes; covering indexes; EXPLAIN / EXPLAIN ANALYZE; selectivity",
+      "difficulty": 4
+    },
+    {
+      "id": "window_advanced",
+      "label": "Window Functions — Frames",
+      "description": "ROWS / RANGE frames; LAG, LEAD; running totals; moving averages; NTILE",
+      "difficulty": 5
+    },
+    {
+      "id": "transactions",
+      "label": "Transactions & ACID",
+      "description": "BEGIN / COMMIT / ROLLBACK; isolation levels; dirty reads, phantom reads, lost updates",
+      "difficulty": 5
+    }
+  ],
+  "edges": [
+    { "from": "data_types",    "to": "select_basics" },
+    { "from": "select_basics", "to": "filtering" },
+    { "from": "select_basics", "to": "sorting" },
+    { "from": "select_basics", "to": "aggregation" },
+    { "from": "filtering",     "to": "aggregation" },
+    { "from": "aggregation",   "to": "grouping" },
+    { "from": "select_basics", "to": "inner_join" },
+    { "from": "schema_design", "to": "inner_join" },
+    { "from": "inner_join",    "to": "outer_join" },
+    { "from": "inner_join",    "to": "self_join" },
+    { "from": "filtering",     "to": "subqueries" },
+    { "from": "inner_join",    "to": "subqueries" },
+    { "from": "grouping",      "to": "subqueries" },
+    { "from": "select_basics", "to": "set_ops" },
+    { "from": "subqueries",    "to": "cte" },
+    { "from": "grouping",      "to": "cte" },
+    { "from": "grouping",      "to": "window_basics" },
+    { "from": "inner_join",    "to": "window_basics" },
+    { "from": "window_basics", "to": "window_advanced" },
+    { "from": "select_basics", "to": "indexes" },
+    { "from": "schema_design", "to": "indexes" },
+    { "from": "data_types",    "to": "normalization" },
+    { "from": "schema_design", "to": "normalization" },
+    { "from": "schema_design", "to": "dml" },
+    { "from": "filtering",     "to": "dml" },
+    { "from": "dml",           "to": "transactions" }
+  ]
+}

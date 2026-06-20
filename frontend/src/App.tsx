@@ -1362,6 +1362,12 @@ function FacultyDashboard() {
 // Root App
 // ---------------------------------------------------------------------------
 
+interface CourseInfo {
+  id: string
+  name: string
+  description: string
+}
+
 export default function App() {
   const [role, setRole] = useState<'student' | 'faculty'>('student')
   const [view, setView] = useState<AppView>('idle')
@@ -1369,14 +1375,19 @@ export default function App() {
   const [graphData, setGraphData] = useState<GraphData | null>(null)
   const [selectedConcept, setSelectedConcept] = useState<string | null>(null)
   const [authStatus, setAuthStatus] = useState<AuthStatus>({ auth_enabled: false, user: null })
+  const [courseInfo, setCourseInfo] = useState<CourseInfo>({ id: 'sql', name: 'SQL Placement Prep', description: 'adaptive SQL placement prep' })
 
   // When auth is enabled, role comes from the session; otherwise from the toggle.
   const effectiveRole: 'student' | 'faculty' = authStatus.auth_enabled
     ? (authStatus.user?.role ?? 'student')
     : role
 
-  // Fetch graph on mount so it's ready when diagnostic finishes
+  // Fetch course info + graph on mount
   useEffect(() => {
+    fetch('/api/course')
+      .then(r => r.json())
+      .then(setCourseInfo)
+      .catch(console.error)
     fetch('/api/graph')
       .then(r => r.json())
       .then(setGraphData)
@@ -1410,7 +1421,7 @@ export default function App() {
       <header className="border-b border-gray-800 px-6 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-bold tracking-tight">BigSper</h1>
-          <span className="text-gray-600 text-xs">adaptive SQL placement prep</span>
+          <span className="text-gray-600 text-xs">{courseInfo.description || courseInfo.name}</span>
         </div>
         <div className="flex items-center gap-4">
           {/* Role toggle — shown only when AUTH_ENABLED=false (fallback) */}

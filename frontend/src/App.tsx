@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 // Types
 // ---------------------------------------------------------------------------
 
-type AppView = 'idle' | 'diagnostic' | 'graph'
+type AppView = 'idle' | 'graph'
 
 interface QuestionData {
   stem: string
@@ -72,6 +72,16 @@ interface VerifyResult {
   evidence: { expected_rows: unknown[][]; actual_rows: unknown[][] }
   narrative: string
   error?: string
+}
+
+interface ScorecardData {
+  concept_id: string
+  diagnostic: {
+    score: number | null
+    tier: 'mastered' | 'partial' | 'gap' | 'unknown'
+    label: string
+  }
+  prove_it: VerifyResult
 }
 
 // ---------------------------------------------------------------------------
@@ -258,17 +268,27 @@ function DiagnosticView({
 
   if (!started) {
     return (
-      <div className="flex flex-col items-center gap-8 mt-16">
-        <div className="text-center space-y-2">
-          <h2 className="text-2xl font-bold text-white">Adaptive Diagnostic</h2>
-          <p className="text-gray-400 text-sm max-w-sm">
-            4–6 questions that map your SQL concept knowledge. Your answers drive the path — faster learners skip ahead, gaps are diagnosed first.
+      <div className="flex flex-col items-center gap-8 mt-10">
+        <div className="text-center space-y-4 max-w-sm">
+          <h2 className="text-2xl font-bold text-white">SQL Placement Prep</h2>
+          <p className="text-gray-400 text-sm leading-relaxed">
+            4–6 adaptive questions map your gaps onto a live knowledge graph.
+            Click any red node → get a grounded lesson → prove you learned it with a verified SQL exercise.
           </p>
+          <div className="flex justify-center items-center gap-2 text-xs text-gray-600 pt-1">
+            <span className="px-2 py-1 rounded bg-gray-800 text-gray-400">① Diagnose</span>
+            <span>→</span>
+            <span className="px-2 py-1 rounded bg-red-950 text-red-400 border border-red-800">② See gaps</span>
+            <span>→</span>
+            <span className="px-2 py-1 rounded bg-gray-800 text-gray-400">③ Learn</span>
+            <span>→</span>
+            <span className="px-2 py-1 rounded bg-green-950 text-green-400 border border-green-800">④ Verified</span>
+          </div>
         </div>
         <button
           onClick={startDiagnostic}
           disabled={loading}
-          className="px-8 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition disabled:opacity-50"
+          className="px-8 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg transition disabled:opacity-50 text-base"
         >
           {loading ? 'Starting…' : 'Start Diagnostic →'}
         </button>
@@ -326,7 +346,7 @@ function DiagnosticView({
 }
 
 // ---------------------------------------------------------------------------
-// Concept graph SVG
+// Concept graph SVG — colored as gap heatmap from diagnostic mastery
 // ---------------------------------------------------------------------------
 
 function ConceptGraph({
@@ -342,7 +362,9 @@ function ConceptGraph({
 }) {
   return (
     <div className="overflow-auto rounded-xl border border-gray-800 bg-gray-900 p-3">
-      <div className="text-xs text-gray-500 mb-2 px-1">Concept graph — click any node to open a lesson</div>
+      <div className="text-xs text-gray-500 mb-2 px-1">
+        Gap heatmap — red nodes are your weakest concepts. Click any to start learning.
+      </div>
       <svg width={660} height={480} className="select-none">
         <defs>
           <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
@@ -421,21 +443,165 @@ function ConceptGraph({
 }
 
 // ---------------------------------------------------------------------------
-// Prove It panel — SQL task + deterministic grading scorecard
+// Scorecard display — diagnostic mastery + prove-it result side by side
 // ---------------------------------------------------------------------------
 
-function ProveItPanel({ conceptId }: { conceptId: string }) {
+function ScorecardDisplay({
+  data,
+  conceptLabel,
+  onReset,
+}: {
+  data: ScorecardData
+  conceptLabel: string
+  onReset: () => void
+}) {
+  const { diagnostic, prove_it: pt } = data
+
+  const diagColors: Record<string, string> = {
+    mastered: 'bg-green-950 border-green-700 text-green-300',
+    partial:  'bg-amber-950 border-amber-700 text-amber-300',
+    gap:      'bg-red-950 border-red-700 text-red-300',
+    unknown:  'bg-gray-800 border-gray-600 text-gray-400',
+  }
+  const diagIcon: Record<string, string> = {
+    mastered: '✓', partial: '~', gap: '✗', unknown: '?',
+  }
+
+  const badgeColorMap: Record<string, string> = {
+    green: 'bg-green-950 border-green-600 text-green-300',
+    blue:  'bg-blue-950 border-blue-600 text-blue-300',
+    gray:  'bg-gray-800 border-gray-600 text-gray-400',
+  }
+  const proveItCls = badgeColorMap[pt.badge.color] ?? badgeColorMap.gray
+
+  return (
+    <div className="flex flex-col gap-4 p-4">
+      {/* Scorecard heading */}
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Scorecard</div>
+          <div className="text-sm font-semibold text-white">{conceptLabel}</div>
+        </div>
+        {pt.passed
+          ? <span className="text-xs font-bold text-green-400 bg-green-950 border border-green-700 rounded px-2 py-0.5">PASS</span>
+          : <span className="text-xs font-bold text-red-400 bg-red-950 border border-red-700 rounded px-2 py-0.5">FAIL</span>
+        }
+      </div>
+
+      {/* Side-by-side: diagnostic vs prove-it */}
+      <div className="grid grid-cols-2 gap-3">
+        {/* Diagnostic mastery */}
+        <div className={`rounded-xl border p-3 flex flex-col gap-1 ${diagColors[diagnostic.tier]}`}>
+          <div className="text-xs opacity-60 uppercase tracking-wide">Before lesson</div>
+          <div className="text-xl font-bold">{diagIcon[diagnostic.tier]}</div>
+          <div className="text-sm font-semibold capitalize">{diagnostic.label}</div>
+          {diagnostic.score !== null && (
+            <div className="text-xs opacity-60">
+              Diagnostic score: {Math.round(diagnostic.score * 100)}%
+            </div>
+          )}
+          <div className="text-xs opacity-50 mt-1">from adaptive diagnostic</div>
+        </div>
+
+        {/* Prove-it result */}
+        <div className={`rounded-xl border p-3 flex flex-col gap-1 ${proveItCls}`}>
+          <div className="text-xs opacity-60 uppercase tracking-wide">After lesson</div>
+          <div className="text-xl font-bold">{pt.passed ? '✅' : '❌'}</div>
+          <div className="text-sm font-semibold">{pt.badge.label}</div>
+          <div className="text-xs opacity-60">
+            Score: {Math.round(pt.score * 100)}%
+          </div>
+          <div className="text-xs opacity-50 mt-1">
+            {pt.badge.label === 'Verified'
+              ? 'deterministically verified'
+              : 'ai assessed'}
+          </div>
+        </div>
+      </div>
+
+      {/* SQL error */}
+      {pt.error && (
+        <div className="bg-red-950 border border-red-800 rounded-lg p-3 text-xs text-red-300 font-mono">
+          {pt.error}
+        </div>
+      )}
+
+      {/* Result diff */}
+      {!pt.error && (pt.evidence.expected_rows.length > 0 || pt.evidence.actual_rows.length > 0) && (
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <div className="text-xs text-gray-500 mb-1">Expected ({pt.evidence.expected_rows.length} rows)</div>
+            <div className="bg-gray-950 border border-gray-800 rounded p-2 text-xs text-gray-300 font-mono max-h-28 overflow-y-auto space-y-0.5">
+              {pt.evidence.expected_rows.slice(0, 15).map((row, i) => (
+                <div key={i} className="text-green-400">{JSON.stringify(row)}</div>
+              ))}
+              {pt.evidence.expected_rows.length > 15 && (
+                <div className="text-gray-600">…{pt.evidence.expected_rows.length - 15} more</div>
+              )}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-gray-500 mb-1">Your output ({pt.evidence.actual_rows.length} rows)</div>
+            <div className="bg-gray-950 border border-gray-800 rounded p-2 text-xs text-gray-300 font-mono max-h-28 overflow-y-auto space-y-0.5">
+              {pt.evidence.actual_rows.slice(0, 15).map((row, i) => (
+                <div key={i} className={pt.passed ? 'text-green-400' : 'text-red-400'}>
+                  {JSON.stringify(row)}
+                </div>
+              ))}
+              {pt.evidence.actual_rows.length > 15 && (
+                <div className="text-gray-600">…{pt.evidence.actual_rows.length - 15} more</div>
+              )}
+              {pt.evidence.actual_rows.length === 0 && !pt.error && (
+                <div className="text-gray-700 italic">no rows returned</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* LLM coaching narrative */}
+      {pt.narrative && (
+        <div className="bg-gray-900 border border-gray-700 rounded-lg p-3">
+          <div className="text-xs text-gray-500 mb-1">Coach</div>
+          <p className="text-sm text-gray-300 leading-relaxed">{pt.narrative}</p>
+        </div>
+      )}
+
+      {/* Try again */}
+      <button
+        onClick={onReset}
+        className="text-xs text-gray-500 hover:text-gray-300 underline self-start"
+      >
+        Try again
+      </button>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Prove It panel — SQL task + unified scorecard
+// ---------------------------------------------------------------------------
+
+function ProveItPanel({
+  conceptId,
+  conceptLabel,
+  mastery,
+}: {
+  conceptId: string
+  conceptLabel: string
+  mastery: Record<string, number>
+}) {
   const [task, setTask] = useState<TaskData | null>(null)
   const [taskLoading, setTaskLoading] = useState(false)
   const [taskError, setTaskError] = useState<string | null>(null)
   const [sql, setSql] = useState('')
   const [running, setRunning] = useState(false)
-  const [result, setResult] = useState<VerifyResult | null>(null)
+  const [scorecard, setScorecard] = useState<ScorecardData | null>(null)
 
   // Generate a task on mount
   useEffect(() => {
     setTask(null)
-    setResult(null)
+    setScorecard(null)
     setSql('')
     setTaskError(null)
     setTaskLoading(true)
@@ -453,19 +619,29 @@ function ProveItPanel({ conceptId }: { conceptId: string }) {
   const runQuery = useCallback(async () => {
     if (!task || !sql.trim()) return
     setRunning(true)
-    setResult(null)
+    setScorecard(null)
     try {
-      const res = await fetch('/api/task/verify', {
+      const res = await fetch('/api/scorecard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task_id: task.task_id, submission: sql }),
+        body: JSON.stringify({
+          task_id: task.task_id,
+          submission: sql,
+          concept_id: conceptId,
+          mastery,
+        }),
       })
-      const data: VerifyResult = await res.json()
-      setResult(data)
+      const data: ScorecardData = await res.json()
+      setScorecard(data)
     } finally {
       setRunning(false)
     }
-  }, [task, sql])
+  }, [task, sql, conceptId, mastery])
+
+  const reset = useCallback(() => {
+    setScorecard(null)
+    setSql('')
+  }, [])
 
   if (taskLoading) {
     return (
@@ -486,14 +662,18 @@ function ProveItPanel({ conceptId }: { conceptId: string }) {
     )
   }
 
-  const badgeColor: Record<string, string> = {
-    green: 'bg-green-950 border-green-600 text-green-300',
-    blue: 'bg-blue-950 border-blue-600 text-blue-300',
-    gray: 'bg-gray-800 border-gray-600 text-gray-400',
+  // After grading: show unified scorecard
+  if (scorecard) {
+    return (
+      <div className="overflow-y-auto h-full">
+        <ScorecardDisplay
+          data={scorecard}
+          conceptLabel={conceptLabel}
+          onReset={reset}
+        />
+      </div>
+    )
   }
-  const resultBadgeCls = result
-    ? (badgeColor[result.badge.color] ?? badgeColor.gray)
-    : ''
 
   return (
     <div className="flex flex-col gap-4 p-4 overflow-y-auto h-full">
@@ -529,82 +709,6 @@ function ProveItPanel({ conceptId }: { conceptId: string }) {
           {running ? 'Running…' : 'Run →'}
         </button>
       </div>
-
-      {/* Scorecard */}
-      {result && (
-        <div className="flex flex-col gap-3">
-          {/* BADGE — first-class element */}
-          <div className={`flex flex-col gap-1 border rounded-xl p-4 ${resultBadgeCls}`}>
-            <div className="flex items-center gap-2">
-              <span className="text-2xl">{result.badge.icon === '✓' ? '✅' : result.badge.icon === '⚡' ? '⚡' : '❓'}</span>
-              <span className="text-lg font-bold">{result.badge.label}</span>
-              {result.passed && <span className="ml-auto text-xs font-semibold text-green-400">PASS</span>}
-              {!result.passed && <span className="ml-auto text-xs font-semibold text-red-400">FAIL</span>}
-            </div>
-            <p className="text-xs opacity-70 mt-0.5">
-              {result.badge.label === 'Verified'
-                ? 'Graded by executing your query against the ground-truth result set.'
-                : 'Graded by AI assessment.'}
-            </p>
-          </div>
-
-          {/* SQL error */}
-          {result.error && (
-            <div className="bg-red-950 border border-red-800 rounded-lg p-3 text-xs text-red-300 font-mono">
-              {result.error}
-            </div>
-          )}
-
-          {/* Result diff — expected vs actual rows */}
-          {!result.error && (result.evidence.expected_rows.length > 0 || result.evidence.actual_rows.length > 0) && (
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <div className="text-xs text-gray-500 mb-1">Expected ({result.evidence.expected_rows.length} rows)</div>
-                <div className="bg-gray-950 border border-gray-800 rounded p-2 text-xs text-gray-300 font-mono max-h-32 overflow-y-auto space-y-0.5">
-                  {result.evidence.expected_rows.slice(0, 20).map((row, i) => (
-                    <div key={i} className="text-green-400">{JSON.stringify(row)}</div>
-                  ))}
-                  {result.evidence.expected_rows.length > 20 && (
-                    <div className="text-gray-600">…{result.evidence.expected_rows.length - 20} more</div>
-                  )}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-gray-500 mb-1">Your output ({result.evidence.actual_rows.length} rows)</div>
-                <div className="bg-gray-950 border border-gray-800 rounded p-2 text-xs text-gray-300 font-mono max-h-32 overflow-y-auto space-y-0.5">
-                  {result.evidence.actual_rows.slice(0, 20).map((row, i) => (
-                    <div key={i} className={result.passed ? 'text-green-400' : 'text-red-400'}>
-                      {JSON.stringify(row)}
-                    </div>
-                  ))}
-                  {result.evidence.actual_rows.length > 20 && (
-                    <div className="text-gray-600">…{result.evidence.actual_rows.length - 20} more</div>
-                  )}
-                  {result.evidence.actual_rows.length === 0 && !result.error && (
-                    <div className="text-gray-700 italic">no rows returned</div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* LLM coaching narrative */}
-          {result.narrative && (
-            <div className="bg-gray-900 border border-gray-700 rounded-lg p-3">
-              <div className="text-xs text-gray-500 mb-1">Coach</div>
-              <p className="text-sm text-gray-300 leading-relaxed">{result.narrative}</p>
-            </div>
-          )}
-
-          {/* Try again */}
-          <button
-            onClick={() => { setResult(null); setSql('') }}
-            className="text-xs text-gray-500 hover:text-gray-300 underline self-start"
-          >
-            Try again
-          </button>
-        </div>
-      )}
     </div>
   )
 }
@@ -629,10 +733,12 @@ function LessonPanel({
   conceptId,
   nodeLabel,
   difficulty,
+  mastery,
 }: {
   conceptId: string
   nodeLabel: string
   difficulty: number
+  mastery: Record<string, number>
 }) {
   const [activeTab, setActiveTab] = useState<'lesson' | 'prove'>('lesson')
   const [profile, setProfile] = useState<Profile>({
@@ -691,12 +797,27 @@ function LessonPanel({
 
   const diffStars = '★'.repeat(difficulty) + '☆'.repeat(5 - difficulty)
 
+  // Mastery badge for header
+  const conceptScore = mastery[conceptId]
+  const masteryTierLabel =
+    conceptScore === undefined ? null
+    : conceptScore >= 0.9 ? { text: 'mastered', cls: 'text-green-400' }
+    : conceptScore >= 0.25 ? { text: 'partial', cls: 'text-amber-400' }
+    : { text: 'gap', cls: 'text-red-400' }
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
       <div className="px-4 pt-4 pb-3 border-b border-gray-800">
         <div className="flex items-start justify-between gap-2">
-          <h2 className="text-base font-semibold text-white">{nodeLabel}</h2>
+          <div>
+            <h2 className="text-base font-semibold text-white">{nodeLabel}</h2>
+            {masteryTierLabel && (
+              <span className={`text-xs ${masteryTierLabel.cls}`}>
+                {masteryTierLabel.text} in diagnostic
+              </span>
+            )}
+          </div>
           <span className="text-amber-400 text-xs mt-0.5 shrink-0">{diffStars}</span>
         </div>
 
@@ -756,7 +877,12 @@ function LessonPanel({
       {/* Tab content */}
       {activeTab === 'prove' ? (
         <div className="flex-1 overflow-y-auto">
-          <ProveItPanel key={conceptId} conceptId={conceptId} />
+          <ProveItPanel
+            key={conceptId}
+            conceptId={conceptId}
+            conceptLabel={nodeLabel}
+            mastery={mastery}
+          />
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1">
@@ -831,6 +957,9 @@ export default function App() {
   const handleDiagnosticComplete = useCallback((m: Record<string, number>) => {
     setMastery(m)
     setView('graph')
+    // Auto-select the weakest assessed concept so the gap→lesson flow starts immediately
+    const weakest = Object.entries(m).sort(([, a], [, b]) => a - b)[0]
+    if (weakest) setSelectedConcept(weakest[0])
   }, [])
 
   const selectedNode = graphData?.nodes.find(n => n.id === selectedConcept)
@@ -860,15 +989,9 @@ export default function App() {
           </div>
         )}
 
-        {view === 'diagnostic' && (
-          <div className="flex-1 flex flex-col items-center justify-center">
-            <DiagnosticView onComplete={handleDiagnosticComplete} />
-          </div>
-        )}
-
         {view === 'graph' && graphData && (
           <div className="flex-1 flex overflow-hidden">
-            {/* Left: graph */}
+            {/* Left: gap heatmap */}
             <div className="flex-1 p-4 overflow-auto">
               <div className="mb-3 flex items-center gap-3">
                 <h2 className="text-sm font-semibold text-white">Your SQL Knowledge Map</h2>
@@ -897,7 +1020,7 @@ export default function App() {
               />
             </div>
 
-            {/* Right: lesson panel */}
+            {/* Right: lesson + prove-it panel */}
             <div className="w-[420px] border-l border-gray-800 flex flex-col overflow-hidden shrink-0">
               {selectedConcept && selectedNode ? (
                 <LessonPanel
@@ -905,12 +1028,13 @@ export default function App() {
                   conceptId={selectedConcept}
                   nodeLabel={selectedNode.label}
                   difficulty={selectedNode.difficulty}
+                  mastery={mastery}
                 />
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center text-center p-8 gap-3">
                   <div className="text-4xl text-gray-700">←</div>
-                  <p className="text-gray-500 text-sm">Click any concept on the graph to open a grounded micro-lesson.</p>
-                  <p className="text-gray-600 text-xs">Lessons are generated from retrieved corpus chunks — sources are always shown.</p>
+                  <p className="text-gray-500 text-sm">Click any concept on the gap heatmap to open a grounded micro-lesson.</p>
+                  <p className="text-gray-600 text-xs">Red nodes are your gaps. Green nodes are mastered. Lessons are generated from retrieved corpus chunks — sources are always shown.</p>
                 </div>
               )}
             </div>

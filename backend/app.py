@@ -10,8 +10,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -131,3 +132,49 @@ app.add_middleware(
 @app.get("/health")
 async def health():
     return _startup
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic endpoints
+# ---------------------------------------------------------------------------
+
+class AnswerRequest(BaseModel):
+    session_id: str
+    answer_index: int   # 0-based index into question.options
+
+
+@app.post("/diagnostic/start")
+async def diagnostic_start():
+    """Begin a new adaptive diagnostic session. Returns session_id + first question."""
+    from backend.engine import diagnostic
+    session_id, question = await diagnostic.start_session()
+    return {
+        "session_id": session_id,
+        "question_number": 1,
+        "question": question.model_dump(),
+        "done": False,
+    }
+
+
+@app.post("/diagnostic/answer")
+async def diagnostic_answer(body: AnswerRequest):
+    """
+    Submit an answer to the current question.
+    Returns next question, or mastery map when the session completes.
+    """
+    from backend.engine import diagnostic
+    try:
+        grade, next_q, mastery = await diagnostic.record_and_advance(
+            body.session_id, body.answer_index
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    response: dict = {"grade": grade.model_dump()}
+    if mastery is not None:
+        response["done"] = True
+        response["mastery"] = mastery
+    else:
+        response["done"] = False
+        response["question"] = next_q.model_dump()  # type: ignore[union-attr]
+    return response

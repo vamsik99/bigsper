@@ -85,6 +85,18 @@ interface ScorecardData {
   prove_it: VerifyResult
 }
 
+interface AuthUser {
+  user_id: string
+  email: string
+  name: string
+  role: 'student' | 'faculty'
+}
+
+interface AuthStatus {
+  auth_enabled: boolean
+  user: AuthUser | null
+}
+
 // ---------------------------------------------------------------------------
 // Pre-computed node positions for the SQL concept graph (SVG layout)
 // Nodes: 120w × 36h  SVG: 660w × 520h
@@ -1221,6 +1233,12 @@ export default function App() {
   const [mastery, setMastery] = useState<Record<string, number>>({})
   const [graphData, setGraphData] = useState<GraphData | null>(null)
   const [selectedConcept, setSelectedConcept] = useState<string | null>(null)
+  const [authStatus, setAuthStatus] = useState<AuthStatus>({ auth_enabled: false, user: null })
+
+  // When auth is enabled, role comes from the session; otherwise from the toggle.
+  const effectiveRole: 'student' | 'faculty' = authStatus.auth_enabled
+    ? (authStatus.user?.role ?? 'student')
+    : role
 
   // Fetch graph on mount so it's ready when diagnostic finishes
   useEffect(() => {
@@ -1228,6 +1246,13 @@ export default function App() {
       .then(r => r.json())
       .then(setGraphData)
       .catch(console.error)
+  }, [])
+
+  useEffect(() => {
+    fetch('/api/auth/status')
+      .then(r => r.json())
+      .then((s: AuthStatus) => setAuthStatus(s))
+      .catch(() => { /* keep default no-auth state */ })
   }, [])
 
   const handleDiagnosticComplete = useCallback((m: Record<string, number>) => {
@@ -1249,21 +1274,40 @@ export default function App() {
           <span className="text-gray-600 text-xs">adaptive SQL placement prep</span>
         </div>
         <div className="flex items-center gap-4">
-          {/* Role toggle — auth fallback until real login is wired */}
-          <div className="flex text-xs bg-gray-900 border border-gray-700 rounded-lg p-0.5">
-            <button
-              onClick={() => setRole('student')}
-              className={`px-3 py-1 rounded-md font-medium transition ${role === 'student' ? 'bg-blue-700 text-white' : 'text-gray-400 hover:text-gray-200'}`}
-            >
-              Student
-            </button>
-            <button
-              onClick={() => setRole('faculty')}
-              className={`px-3 py-1 rounded-md font-medium transition ${role === 'faculty' ? 'bg-blue-700 text-white' : 'text-gray-400 hover:text-gray-200'}`}
-            >
-              Faculty
-            </button>
-          </div>
+          {/* Role toggle — shown only when AUTH_ENABLED=false (fallback) */}
+          {!authStatus.auth_enabled && (
+            <div className="flex text-xs bg-gray-900 border border-gray-700 rounded-lg p-0.5">
+              <button
+                onClick={() => setRole('student')}
+                className={`px-3 py-1 rounded-md font-medium transition ${role === 'student' ? 'bg-blue-700 text-white' : 'text-gray-400 hover:text-gray-200'}`}
+              >
+                Student
+              </button>
+              <button
+                onClick={() => setRole('faculty')}
+                className={`px-3 py-1 rounded-md font-medium transition ${role === 'faculty' ? 'bg-blue-700 text-white' : 'text-gray-400 hover:text-gray-200'}`}
+              >
+                Faculty
+              </button>
+            </div>
+          )}
+          {/* Auth controls — shown only when AUTH_ENABLED=true */}
+          {authStatus.auth_enabled && authStatus.user && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-gray-400">{authStatus.user.name}</span>
+              <span className={`px-2 py-0.5 rounded font-medium ${authStatus.user.role === 'faculty' ? 'bg-violet-700 text-white' : 'bg-blue-800 text-blue-200'}`}>
+                {authStatus.user.role}
+              </span>
+              <a href="/api/auth/logout" className="text-gray-500 hover:text-gray-300 border border-gray-700 rounded px-2 py-0.5">
+                Logout
+              </a>
+            </div>
+          )}
+          {authStatus.auth_enabled && !authStatus.user && (
+            <a href="/api/auth/login" className="text-xs bg-violet-700 hover:bg-violet-600 text-white px-3 py-1 rounded-md font-medium transition">
+              Faculty Login
+            </a>
+          )}
           <div className="hidden sm:flex gap-3 text-xs text-gray-600">
             <span>Well-researched</span>
             <span>·</span>
@@ -1276,15 +1320,15 @@ export default function App() {
 
       {/* Main content */}
       <main className="flex-1 flex overflow-hidden">
-        {role === 'faculty' && <FacultyDashboard />}
+        {effectiveRole === 'faculty' && <FacultyDashboard />}
 
-        {role === 'student' && view === 'idle' && (
+        {effectiveRole === 'student' && view === 'idle' && (
           <div className="flex-1 flex flex-col items-center justify-center">
             <DiagnosticView onComplete={handleDiagnosticComplete} />
           </div>
         )}
 
-        {role === 'student' && view === 'graph' && graphData && (
+        {effectiveRole === 'student' && view === 'graph' && graphData && (
           <div className="flex-1 flex overflow-hidden">
             {/* Left: gap heatmap */}
             <div className="flex-1 p-4 overflow-auto">

@@ -78,9 +78,13 @@ Corpus lives in `courses/sql/corpus/` — add chunked text or markdown files bef
 - `"verified"` badges are awarded only by deterministic `SQLVerifier`, never by an LLM.
 - Engine modules cannot import course-specific code — enforced structurally via `get_active()`.
 
+## Auth
+
+Role-based access control via [ScaleKit](https://scalekit.com/) — set `AUTH_ENABLED=true` plus ScaleKit env vars to activate faculty login (RBAC: `student` / `faculty` roles). With `AUTH_ENABLED=false` (default) the header toggle remains the fallback and the full student loop runs with no login required.
+
 ## Limitations
 
-- No authentication (single-user demo)
+- Auth is feature-flagged (off by default); single-user demo when flag is off
 - Single course in this demo; second course requires a new `courses/<id>/` directory
 - Concept graph is hand-authored; no auto-builder
 - Corpus must be manually populated before lessons can be generated
@@ -104,3 +108,4 @@ Vamsi Krishnamurthy — built in 24 hours.
 | [Vite](https://vitejs.dev/) | MIT | Frontend build tool |
 | [Tailwind CSS](https://tailwindcss.com/) | MIT | Utility-first styling |
 | [Recharts](https://recharts.org/) | MIT | Charts (gap heatmap, scorecard) |
+| [ScaleKit](https://scalekit.com/) | Apache-2.0 | RBAC auth (student/faculty roles, hosted login) |

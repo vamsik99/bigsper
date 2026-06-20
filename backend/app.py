@@ -10,14 +10,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
 logger = logging.getLogger(__name__)
+
+import backend.auth as _auth  # noqa: E402 — after load_dotenv so AUTH_ENABLED is read
 
 _COURSES_DIR = Path(__file__).parent.parent / "courses"
 
@@ -127,6 +130,66 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _redirect_uri(request: Request) -> str:
+    """Callback URL — override with SCALEKIT_REDIRECT_URI in .env."""
+    return os.getenv(
+        "SCALEKIT_REDIRECT_URI",
+        str(request.base_url).rstrip("/") + "/auth/callback",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoints (no-ops when AUTH_ENABLED=false or ScaleKit unavailable)
+# ---------------------------------------------------------------------------
+
+@app.get("/auth/status")
+async def auth_status(request: Request):
+    """Return {auth_enabled, user} for the current session."""
+    token = request.cookies.get("bigsper_session")
+    user = _auth.get_session(token)
+    return {"auth_enabled": _auth.is_active(), "user": user}
+
+
+@app.get("/auth/login")
+async def auth_login(request: Request):
+    """Redirect browser to ScaleKit hosted login. Falls back to / if auth not active."""
+    login_url = _auth.get_login_url(_redirect_uri(request))
+    if not login_url:
+        return RedirectResponse("/?auth_error=disabled")
+    return RedirectResponse(login_url)
+
+
+@app.get("/auth/callback")
+async def auth_callback(request: Request, code: str = ""):
+    """Exchange ScaleKit auth code, set session cookie, redirect to frontend."""
+    if not code:
+        return RedirectResponse("/?auth_error=no_code")
+    user_info = _auth.exchange_code(code, _redirect_uri(request))
+    if not user_info:
+        return RedirectResponse("/?auth_error=exchange_failed")
+    token = _auth.create_session(user_info)
+    resp = RedirectResponse("/")
+    resp.set_cookie(
+        key="bigsper_session",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        max_age=86400,
+    )
+    return resp
+
+
+@app.get("/auth/logout")
+async def auth_logout(request: Request):
+    """Clear session cookie and redirect to frontend."""
+    token = request.cookies.get("bigsper_session")
+    if token:
+        _auth.delete_session(token)
+    resp = RedirectResponse("/")
+    resp.delete_cookie("bigsper_session")
+    return resp
 
 
 @app.get("/health")
@@ -248,8 +311,13 @@ async def scorecard_endpoint(body: ScorecardRequest):
 
 
 @app.post("/faculty/report")
-async def faculty_report():
-    """Aggregate cohort data into class heatmap, placement-ready count, and weakest concepts."""
+async def faculty_report(request: Request):
+    """Aggregate cohort data. Requires faculty role when AUTH_ENABLED=true."""
+    if _auth.is_active():
+        token = request.cookies.get("bigsper_session")
+        user = _auth.get_session(token)
+        if not user or user.get("role") != "faculty":
+            raise HTTPException(status_code=403, detail="Faculty role required")
     from backend.engine import faculty
     return faculty.build_report()
 

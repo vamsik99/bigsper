@@ -94,7 +94,7 @@ async def _narrate(result, task: dict, submission: str) -> str:
         {
             "role": "system",
             "content": (
-                "You are a concise SQL tutor. The student's answer has already been graded "
+                "You are a concise technical tutor. The student's answer has already been graded "
                 "deterministically — do NOT re-evaluate or override the grade. "
                 "Your only job: write 2–3 sentences of coaching that explain what was right "
                 "or what went wrong, and give one concrete tip for improvement if the answer "
@@ -105,7 +105,7 @@ async def _narrate(result, task: dict, submission: str) -> str:
             "role": "user",
             "content": (
                 f"Exercise: {task['prompt']}\n\n"
-                f"Student SQL:\n{submission}\n\n"
+                f"Student answer:\n{submission}\n\n"
                 f"Grading outcome: {status}\n"
                 f"System feedback: {result.feedback}\n\n"
                 "Write your coaching now."

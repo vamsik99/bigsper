@@ -599,10 +599,12 @@ function ProveItPanel({
   conceptId,
   conceptLabel,
   mastery,
+  onScorecard,
 }: {
   conceptId: string
   conceptLabel: string
   mastery: Record<string, number>
+  onScorecard?: (conceptId: string, score: number) => void
 }) {
   const [task, setTask] = useState<TaskData | null>(null)
   const [taskLoading, setTaskLoading] = useState(false)
@@ -646,10 +648,13 @@ function ProveItPanel({
       })
       const data: ScorecardData = await res.json()
       setScorecard(data)
+      if (data.prove_it.passed) {
+        onScorecard?.(conceptId, data.prove_it.score)
+      }
     } finally {
       setRunning(false)
     }
-  }, [task, sql, conceptId, mastery])
+  }, [task, sql, conceptId, mastery, onScorecard])
 
   const reset = useCallback(() => {
     setScorecard(null)
@@ -747,11 +752,13 @@ function LessonPanel({
   nodeLabel,
   difficulty,
   mastery,
+  onScorecard,
 }: {
   conceptId: string
   nodeLabel: string
   difficulty: number
   mastery: Record<string, number>
+  onScorecard?: (conceptId: string, score: number) => void
 }) {
   const [activeTab, setActiveTab] = useState<'lesson' | 'prove'>('lesson')
   const [profile, setProfile] = useState<Profile>({
@@ -895,6 +902,7 @@ function LessonPanel({
             conceptId={conceptId}
             conceptLabel={nodeLabel}
             mastery={mastery}
+            onScorecard={onScorecard}
           />
         </div>
       ) : (
@@ -1255,6 +1263,10 @@ export default function App() {
       .catch(() => { /* keep default no-auth state */ })
   }, [])
 
+  const handleProveItScorecard = useCallback((conceptId: string, score: number) => {
+    setMastery(prev => ({ ...prev, [conceptId]: Math.max(prev[conceptId] ?? 0, score) }))
+  }, [])
+
   const handleDiagnosticComplete = useCallback((m: Record<string, number>) => {
     setMastery(m)
     setView('graph')
@@ -1368,6 +1380,7 @@ export default function App() {
                   nodeLabel={selectedNode.label}
                   difficulty={selectedNode.difficulty}
                   mastery={mastery}
+                  onScorecard={handleProveItScorecard}
                 />
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center text-center p-8 gap-3">

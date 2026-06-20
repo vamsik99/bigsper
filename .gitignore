@@ -15,6 +15,7 @@ build/
 
 # ChromaDB
 chroma_db/
+.chroma/
 
 # Node
 node_modules/

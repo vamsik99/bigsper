@@ -91,7 +91,7 @@ Role-based access control via [ScaleKit](https://scalekit.com/) — set `AUTH_EN
 
 ## Team
 
-Vamsi Krishnamurthy — built in 24 hours.
+Vamsi Krishna and Shivani Balakrishna
 
 ## ATTRIBUTIONS
 

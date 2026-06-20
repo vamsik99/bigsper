@@ -21,6 +21,14 @@ from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
+_last_embed_provider: str = "not_run"
+
+
+def last_embed_provider() -> str:
+    """Return which provider handled the most recent embed() call."""
+    return _last_embed_provider
+
+
 _PROVIDER_CFG: dict[str, dict[str, str | None]] = {
     "fastrouter": {
         "key_env":     "FASTROUTER_API_KEY",
@@ -86,16 +94,19 @@ async def embed(texts: list[str]) -> list[list[float]]:
     Embed texts via Neysa (4-second timeout).
     Falls back to OpenAI on any error or timeout. Logs which path ran.
     """
+    global _last_embed_provider
     model = os.environ.get("EMBED_MODEL", "text-embedding-3-small")
     try:
         resp = await asyncio.wait_for(
             get_client("neysa").embeddings.create(input=texts, model=model),
             timeout=4.0,
         )
+        _last_embed_provider = "neysa"
         logger.info("embed: neysa (%d texts)", len(texts))
         return [item.embedding for item in resp.data]
     except Exception as exc:  # noqa: BLE001
         logger.warning("embed: neysa failed (%s) — falling back to openai", exc)
         resp = await get_client("openai").embeddings.create(input=texts, model=model)
+        _last_embed_provider = "openai"
         logger.info("embed: openai fallback (%d texts)", len(texts))
         return [item.embedding for item in resp.data]

@@ -247,6 +247,13 @@ async def scorecard_endpoint(body: ScorecardRequest):
     return sc.build(body.concept_id, body.mastery, verify_result)
 
 
+@app.post("/faculty/report")
+async def faculty_report():
+    """Aggregate cohort data into class heatmap, placement-ready count, and weakest concepts."""
+    from backend.engine import faculty
+    return faculty.build_report()
+
+
 @app.post("/diagnostic/start")
 async def diagnostic_start():
     """Begin a new adaptive diagnostic session. Returns session_id + first question."""

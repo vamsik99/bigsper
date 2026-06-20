@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -937,10 +938,285 @@ function LessonPanel({
 }
 
 // ---------------------------------------------------------------------------
+// Faculty types
+// ---------------------------------------------------------------------------
+
+interface ConceptHeatmapRow {
+  concept_id: string
+  concept_label: string
+  mastered: number
+  partial: number
+  gap: number
+  unknown: number
+  avg_score: number | null
+}
+
+interface StudentReport {
+  id: string
+  name: string
+  readiness_score: number
+  prove_it_score: number | null
+  prove_it_passed: boolean | null
+  prove_it_badge: string | null
+  prove_it_concept: string | null
+}
+
+interface FacultyReport {
+  class_heatmap: ConceptHeatmapRow[]
+  placement_ready_count: number
+  total_students: number
+  weakest_concepts: ConceptHeatmapRow[]
+  students: StudentReport[]
+  readiness_threshold: number
+}
+
+type SortCol = 'name' | 'readiness' | 'prove_it'
+
+// ---------------------------------------------------------------------------
+// Faculty Dashboard
+// ---------------------------------------------------------------------------
+
+function FacultyDashboard() {
+  const [report, setReport] = useState<FacultyReport | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [fetchError, setFetchError] = useState<string | null>(null)
+  const [sortCol, setSortCol] = useState<SortCol>('readiness')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  useEffect(() => {
+    fetch('/api/faculty/report', { method: 'POST' })
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+      .then(setReport)
+      .catch(e => setFetchError(String(e)))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const sortedStudents = useMemo(() => {
+    if (!report) return []
+    return [...report.students].sort((a, b) => {
+      let cmp = 0
+      if (sortCol === 'name') {
+        cmp = a.name.localeCompare(b.name)
+      } else if (sortCol === 'readiness') {
+        cmp = a.readiness_score - b.readiness_score
+      } else {
+        cmp = (a.prove_it_score ?? -1) - (b.prove_it_score ?? -1)
+      }
+      return sortDir === 'desc' ? -cmp : cmp
+    })
+  }, [report, sortCol, sortDir])
+
+  const toggleSort = (col: SortCol) => {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortCol(col); setSortDir('desc') }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <p className="text-gray-500 animate-pulse">Loading cohort report…</p>
+      </div>
+    )
+  }
+
+  if (fetchError || !report) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <p className="text-red-400 text-sm">{fetchError ?? 'Failed to load report.'}</p>
+      </div>
+    )
+  }
+
+  const heatmapData = report.class_heatmap.map(row => ({
+    name: row.concept_label.length > 14 ? row.concept_label.slice(0, 13) + '…' : row.concept_label,
+    mastered: row.mastered,
+    partial: row.partial,
+    gap: row.gap,
+    unknown: row.unknown,
+  }))
+
+  const passRate = report.total_students > 0
+    ? Math.round(report.placement_ready_count / report.total_students * 100)
+    : 0
+
+  const sortArrow = (col: SortCol) => sortCol === col ? (sortDir === 'desc' ? ' ↓' : ' ↑') : ''
+
+  return (
+    <div className="flex-1 overflow-auto p-6 space-y-6">
+      {/* Stats row */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Placement Ready</div>
+          <div className="text-3xl font-bold text-green-400">{report.placement_ready_count}</div>
+          <div className="text-xs text-gray-600 mt-0.5">
+            of {report.total_students} students · ≥{Math.round(report.readiness_threshold * 100)}% avg mastery
+          </div>
+        </div>
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Class Pass Rate</div>
+          <div className={`text-3xl font-bold ${passRate >= 50 ? 'text-green-400' : passRate >= 30 ? 'text-amber-400' : 'text-red-400'}`}>
+            {passRate}%
+          </div>
+          <div className="text-xs text-gray-600 mt-0.5">placement-readiness threshold</div>
+        </div>
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Top Class Gap</div>
+          {report.weakest_concepts[0] ? (
+            <>
+              <div className="text-lg font-bold text-red-400 leading-tight">{report.weakest_concepts[0].concept_label}</div>
+              <div className="text-xs text-gray-600 mt-0.5">
+                {report.weakest_concepts[0].gap} gaps · avg{' '}
+                {report.weakest_concepts[0].avg_score !== null
+                  ? Math.round(report.weakest_concepts[0].avg_score * 100) + '%'
+                  : '—'}
+              </div>
+            </>
+          ) : <div className="text-gray-600 text-sm">—</div>}
+        </div>
+      </div>
+
+      {/* Cohort Mastery Heatmap */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+        <h3 className="text-sm font-semibold text-white mb-0.5">Cohort Mastery by Concept</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          How many students are mastered / partial / gap on each SQL concept
+        </p>
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={heatmapData} margin={{ top: 4, right: 8, left: 0, bottom: 72 }}>
+            <XAxis
+              dataKey="name"
+              tick={{ fontSize: 9, fill: '#9CA3AF' }}
+              angle={-45}
+              textAnchor="end"
+              interval={0}
+            />
+            <YAxis tick={{ fontSize: 10, fill: '#6B7280' }} allowDecimals={false} />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: '#111827',
+                border: '1px solid #374151',
+                borderRadius: 8,
+                fontSize: 12,
+              }}
+              labelStyle={{ color: '#F3F4F6' }}
+            />
+            <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
+            <Bar dataKey="mastered" stackId="a" fill="#166534" name="Mastered" />
+            <Bar dataKey="partial"  stackId="a" fill="#92400e" name="Partial" />
+            <Bar dataKey="gap"      stackId="a" fill="#991b1b" name="Gap" />
+            <Bar dataKey="unknown"  stackId="a" fill="#374151" name="Not assessed" radius={[2, 2, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Bottom row: weakest concepts + student table */}
+      <div className="grid grid-cols-3 gap-4">
+        {/* Weakest class-wide concepts */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <h3 className="text-sm font-semibold text-white mb-3">Top Class-Wide Gaps</h3>
+          <div className="space-y-3">
+            {report.weakest_concepts.map((c, i) => (
+              <div key={c.concept_id} className="flex items-center gap-2">
+                <span className="text-xs text-gray-600 w-4 shrink-0">{i + 1}.</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-gray-200 truncate">{c.concept_label}</div>
+                  <div className="flex gap-2 text-xs mt-0.5">
+                    <span className="text-red-400">{c.gap} gap</span>
+                    <span className="text-amber-400">{c.partial} partial</span>
+                    {c.avg_score !== null && (
+                      <span className="text-gray-500">avg {Math.round(c.avg_score * 100)}%</span>
+                    )}
+                  </div>
+                  <div className="mt-1 h-1 bg-gray-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-red-700 rounded-full"
+                      style={{ width: `${c.avg_score !== null ? Math.round(c.avg_score * 100) : 0}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Student list */}
+        <div className="col-span-2 bg-gray-900 border border-gray-800 rounded-xl p-4 overflow-auto">
+          <h3 className="text-sm font-semibold text-white mb-3">Students by Readiness</h3>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-gray-500 border-b border-gray-800">
+                <th
+                  className="text-left py-1.5 pr-3 cursor-pointer select-none hover:text-gray-300 font-medium"
+                  onClick={() => toggleSort('name')}
+                >
+                  Name{sortArrow('name')}
+                </th>
+                <th
+                  className="text-right py-1.5 pr-3 cursor-pointer select-none hover:text-gray-300 font-medium"
+                  onClick={() => toggleSort('readiness')}
+                >
+                  Readiness{sortArrow('readiness')}
+                </th>
+                <th
+                  className="text-center py-1.5 pr-3 cursor-pointer select-none hover:text-gray-300 font-medium"
+                  onClick={() => toggleSort('prove_it')}
+                >
+                  Prove It{sortArrow('prove_it')}
+                </th>
+                <th className="text-left py-1.5 font-medium text-gray-600">Concept</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedStudents.map(student => {
+                const ready = student.readiness_score >= report.readiness_threshold
+                const pct = Math.round(student.readiness_score * 100)
+                return (
+                  <tr key={student.id} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition">
+                    <td className="py-2 pr-3 text-gray-200 font-medium">
+                      {student.name}
+                      {ready && <span className="ml-1.5 text-green-400">✓</span>}
+                    </td>
+                    <td className="py-2 pr-3 text-right">
+                      <span className={`font-mono font-semibold ${ready ? 'text-green-400' : pct >= 50 ? 'text-amber-400' : 'text-red-400'}`}>
+                        {pct}%
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3 text-center">
+                      {student.prove_it_score !== null ? (
+                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-semibold ${
+                          student.prove_it_passed
+                            ? 'bg-green-950 text-green-400 border border-green-800'
+                            : 'bg-red-950 text-red-400 border border-red-800'
+                        }`}>
+                          {student.prove_it_passed ? '✓' : '✗'} {Math.round(student.prove_it_score * 100)}%
+                          {student.prove_it_badge === 'verified' && (
+                            <span className="text-blue-400" title="Deterministically verified">⬡</span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-gray-700">—</span>
+                      )}
+                    </td>
+                    <td className="py-2 text-gray-500">
+                      {student.prove_it_concept?.replace(/_/g, ' ') ?? '—'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Root App
 // ---------------------------------------------------------------------------
 
 export default function App() {
+  const [role, setRole] = useState<'student' | 'faculty'>('student')
   const [view, setView] = useState<AppView>('idle')
   const [mastery, setMastery] = useState<Record<string, number>>({})
   const [graphData, setGraphData] = useState<GraphData | null>(null)
@@ -972,24 +1248,43 @@ export default function App() {
           <h1 className="text-lg font-bold tracking-tight">BigSper</h1>
           <span className="text-gray-600 text-xs">adaptive SQL placement prep</span>
         </div>
-        <div className="flex gap-4 text-xs text-gray-600">
-          <span>Well-researched</span>
-          <span>·</span>
-          <span>Adaptive</span>
-          <span>·</span>
-          <span>Ground-truth verified</span>
+        <div className="flex items-center gap-4">
+          {/* Role toggle — auth fallback until real login is wired */}
+          <div className="flex text-xs bg-gray-900 border border-gray-700 rounded-lg p-0.5">
+            <button
+              onClick={() => setRole('student')}
+              className={`px-3 py-1 rounded-md font-medium transition ${role === 'student' ? 'bg-blue-700 text-white' : 'text-gray-400 hover:text-gray-200'}`}
+            >
+              Student
+            </button>
+            <button
+              onClick={() => setRole('faculty')}
+              className={`px-3 py-1 rounded-md font-medium transition ${role === 'faculty' ? 'bg-blue-700 text-white' : 'text-gray-400 hover:text-gray-200'}`}
+            >
+              Faculty
+            </button>
+          </div>
+          <div className="hidden sm:flex gap-3 text-xs text-gray-600">
+            <span>Well-researched</span>
+            <span>·</span>
+            <span>Adaptive</span>
+            <span>·</span>
+            <span>Ground-truth verified</span>
+          </div>
         </div>
       </header>
 
       {/* Main content */}
       <main className="flex-1 flex overflow-hidden">
-        {view === 'idle' && (
+        {role === 'faculty' && <FacultyDashboard />}
+
+        {role === 'student' && view === 'idle' && (
           <div className="flex-1 flex flex-col items-center justify-center">
             <DiagnosticView onComplete={handleDiagnosticComplete} />
           </div>
         )}
 
-        {view === 'graph' && graphData && (
+        {role === 'student' && view === 'graph' && graphData && (
           <div className="flex-1 flex overflow-hidden">
             {/* Left: gap heatmap */}
             <div className="flex-1 p-4 overflow-auto">

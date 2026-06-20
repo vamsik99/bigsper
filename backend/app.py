@@ -152,6 +152,13 @@ class TaskVerifyRequest(BaseModel):
     submission: str
 
 
+class ScorecardRequest(BaseModel):
+    task_id: str
+    submission: str
+    concept_id: str
+    mastery: dict[str, float] = {}
+
+
 class LessonRequest(BaseModel):
     concept_id: str
     profile: dict
@@ -223,6 +230,21 @@ async def task_verify(body: TaskVerifyRequest):
         return await tasks.verify_task(body.task_id, body.submission)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/scorecard")
+async def scorecard_endpoint(body: ScorecardRequest):
+    """
+    Grade a submission and return a unified scorecard combining the diagnostic
+    mastery score for the concept with the prove-it result (badge, evidence, narrative).
+    """
+    from backend.engine import tasks
+    from backend.engine import scorecard as sc
+    try:
+        verify_result = await tasks.verify_task(body.task_id, body.submission)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return sc.build(body.concept_id, body.mastery, verify_result)
 
 
 @app.post("/diagnostic/start")

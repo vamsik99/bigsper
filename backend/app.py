@@ -262,6 +262,17 @@ class RerenderRequest(BaseModel):
     sources: list[dict] | None = None
 
 
+@app.get("/course")
+async def course_info():
+    """Return active course metadata (id, name, description)."""
+    try:
+        from backend.course import get_active
+        c = get_active()
+        return {"id": c.id, "name": c.name, "description": c.description}
+    except Exception as exc:
+        return {"id": "unknown", "name": "BigSper", "description": ""}
+
+
 @app.get("/graph")
 async def graph_data():
     """Return the active course concept graph (nodes + edges)."""

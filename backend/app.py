@@ -143,6 +143,53 @@ class AnswerRequest(BaseModel):
     answer_index: int   # 0-based index into question.options
 
 
+class LessonRequest(BaseModel):
+    concept_id: str
+    profile: dict
+
+
+class RerenderRequest(BaseModel):
+    concept_id: str
+    profile: dict
+    sources: list[dict] | None = None
+
+
+@app.get("/graph")
+async def graph_data():
+    """Return the active course concept graph (nodes + edges)."""
+    from backend.course import get_active
+    return get_active().graph
+
+
+@app.get("/profile_dimensions")
+async def profile_dimensions():
+    """Return the available profile dimension options."""
+    from backend.engine import lessons
+    return lessons.get_profile_dimensions()
+
+
+@app.post("/lesson")
+async def lesson(body: LessonRequest):
+    """
+    Retrieve corpus chunks for concept_id and generate a grounded micro-lesson.
+    Response includes sources used for citation.
+    """
+    from backend.engine import lessons
+    result = await lessons.fetch_lesson(body.concept_id, body.profile)
+    return result
+
+
+@app.post("/lesson/rerender")
+async def lesson_rerender(body: RerenderRequest):
+    """
+    Re-render the lesson for concept_id with a new profile.
+    Pass sources from a previous /lesson response to skip re-retrieval.
+    """
+    from backend.engine import lessons
+    result = await lessons.rerender_lesson(body.concept_id, body.profile, body.sources)
+    return result
+
+
 @app.post("/diagnostic/start")
 async def diagnostic_start():
     """Begin a new adaptive diagnostic session. Returns session_id + first question."""

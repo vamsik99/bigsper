@@ -143,6 +143,15 @@ class AnswerRequest(BaseModel):
     answer_index: int   # 0-based index into question.options
 
 
+class TaskGenerateRequest(BaseModel):
+    weak_concepts: list[str]
+
+
+class TaskVerifyRequest(BaseModel):
+    task_id: str
+    submission: str
+
+
 class LessonRequest(BaseModel):
     concept_id: str
     profile: dict
@@ -188,6 +197,32 @@ async def lesson_rerender(body: RerenderRequest):
     from backend.engine import lessons
     result = await lessons.rerender_lesson(body.concept_id, body.profile, body.sources)
     return result
+
+
+@app.post("/task/generate")
+async def task_generate(body: TaskGenerateRequest):
+    """
+    Generate a practice task for the given weak concepts.
+    Returns task_id + prompt + schema context (no reference solution).
+    """
+    from backend.engine import tasks
+    try:
+        return await tasks.generate_task(body.weak_concepts)
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+
+
+@app.post("/task/verify")
+async def task_verify(body: TaskVerifyRequest):
+    """
+    Grade a submission against the stored reference solution.
+    Returns scorecard: passed, score, badge, signals, evidence, narrative.
+    """
+    from backend.engine import tasks
+    try:
+        return await tasks.verify_task(body.task_id, body.submission)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/diagnostic/start")

@@ -51,6 +51,29 @@ interface Profile {
   format: string
 }
 
+interface TaskData {
+  task_id: string
+  prompt: string
+  concept_id: string
+  context: string
+}
+
+interface BadgeData {
+  label: string
+  color: string
+  icon: string
+}
+
+interface VerifyResult {
+  passed: boolean
+  score: number
+  badge: BadgeData
+  signals: string
+  evidence: { expected_rows: unknown[][]; actual_rows: unknown[][] }
+  narrative: string
+  error?: string
+}
+
 // ---------------------------------------------------------------------------
 // Pre-computed node positions for the SQL concept graph (SVG layout)
 // Nodes: 120w × 36h  SVG: 660w × 520h
@@ -398,6 +421,195 @@ function ConceptGraph({
 }
 
 // ---------------------------------------------------------------------------
+// Prove It panel — SQL task + deterministic grading scorecard
+// ---------------------------------------------------------------------------
+
+function ProveItPanel({ conceptId }: { conceptId: string }) {
+  const [task, setTask] = useState<TaskData | null>(null)
+  const [taskLoading, setTaskLoading] = useState(false)
+  const [taskError, setTaskError] = useState<string | null>(null)
+  const [sql, setSql] = useState('')
+  const [running, setRunning] = useState(false)
+  const [result, setResult] = useState<VerifyResult | null>(null)
+
+  // Generate a task on mount
+  useEffect(() => {
+    setTask(null)
+    setResult(null)
+    setSql('')
+    setTaskError(null)
+    setTaskLoading(true)
+    fetch('/api/task/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ weak_concepts: [conceptId] }),
+    })
+      .then(r => r.json())
+      .then((data: TaskData) => setTask(data))
+      .catch(e => setTaskError(String(e)))
+      .finally(() => setTaskLoading(false))
+  }, [conceptId])
+
+  const runQuery = useCallback(async () => {
+    if (!task || !sql.trim()) return
+    setRunning(true)
+    setResult(null)
+    try {
+      const res = await fetch('/api/task/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_id: task.task_id, submission: sql }),
+      })
+      const data: VerifyResult = await res.json()
+      setResult(data)
+    } finally {
+      setRunning(false)
+    }
+  }, [task, sql])
+
+  if (taskLoading) {
+    return (
+      <div className="flex flex-col gap-3 p-4 mt-4">
+        <div className="h-3 bg-gray-800 rounded animate-pulse w-3/4" />
+        <div className="h-3 bg-gray-800 rounded animate-pulse w-full" />
+        <div className="h-3 bg-gray-800 rounded animate-pulse w-2/3" />
+        <div className="text-xs text-gray-600 mt-2 animate-pulse">Generating exercise…</div>
+      </div>
+    )
+  }
+
+  if (taskError || !task) {
+    return (
+      <div className="p-4 text-xs text-red-400">
+        {taskError ?? 'Failed to generate task.'}
+      </div>
+    )
+  }
+
+  const badgeColor: Record<string, string> = {
+    green: 'bg-green-950 border-green-600 text-green-300',
+    blue: 'bg-blue-950 border-blue-600 text-blue-300',
+    gray: 'bg-gray-800 border-gray-600 text-gray-400',
+  }
+  const resultBadgeCls = result
+    ? (badgeColor[result.badge.color] ?? badgeColor.gray)
+    : ''
+
+  return (
+    <div className="flex flex-col gap-4 p-4 overflow-y-auto h-full">
+      {/* Exercise prompt */}
+      <div className="bg-gray-900 border border-gray-700 rounded-lg p-3">
+        <div className="text-xs text-gray-500 mb-1">Exercise</div>
+        <p className="text-sm text-white leading-relaxed">{task.prompt}</p>
+        {task.context && (
+          <details className="mt-2 group">
+            <summary className="cursor-pointer text-xs text-gray-600 hover:text-gray-400 select-none">
+              ▶ Schema reference
+            </summary>
+            <pre className="mt-1 text-xs text-gray-400 bg-gray-950 rounded p-2 overflow-x-auto whitespace-pre-wrap">{task.context}</pre>
+          </details>
+        )}
+      </div>
+
+      {/* SQL input */}
+      <div className="flex flex-col gap-2">
+        <label className="text-xs text-gray-500">Your SQL</label>
+        <textarea
+          value={sql}
+          onChange={e => setSql(e.target.value)}
+          placeholder="SELECT ..."
+          rows={5}
+          className="w-full bg-gray-950 border border-gray-700 rounded-lg p-3 text-sm text-green-300 font-mono resize-y focus:outline-none focus:border-blue-600 placeholder-gray-700"
+        />
+        <button
+          onClick={runQuery}
+          disabled={running || !sql.trim()}
+          className="self-end px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm font-semibold rounded-lg transition"
+        >
+          {running ? 'Running…' : 'Run →'}
+        </button>
+      </div>
+
+      {/* Scorecard */}
+      {result && (
+        <div className="flex flex-col gap-3">
+          {/* BADGE — first-class element */}
+          <div className={`flex flex-col gap-1 border rounded-xl p-4 ${resultBadgeCls}`}>
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">{result.badge.icon === '✓' ? '✅' : result.badge.icon === '⚡' ? '⚡' : '❓'}</span>
+              <span className="text-lg font-bold">{result.badge.label}</span>
+              {result.passed && <span className="ml-auto text-xs font-semibold text-green-400">PASS</span>}
+              {!result.passed && <span className="ml-auto text-xs font-semibold text-red-400">FAIL</span>}
+            </div>
+            <p className="text-xs opacity-70 mt-0.5">
+              {result.badge.label === 'Verified'
+                ? 'Graded by executing your query against the ground-truth result set.'
+                : 'Graded by AI assessment.'}
+            </p>
+          </div>
+
+          {/* SQL error */}
+          {result.error && (
+            <div className="bg-red-950 border border-red-800 rounded-lg p-3 text-xs text-red-300 font-mono">
+              {result.error}
+            </div>
+          )}
+
+          {/* Result diff — expected vs actual rows */}
+          {!result.error && (result.evidence.expected_rows.length > 0 || result.evidence.actual_rows.length > 0) && (
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <div className="text-xs text-gray-500 mb-1">Expected ({result.evidence.expected_rows.length} rows)</div>
+                <div className="bg-gray-950 border border-gray-800 rounded p-2 text-xs text-gray-300 font-mono max-h-32 overflow-y-auto space-y-0.5">
+                  {result.evidence.expected_rows.slice(0, 20).map((row, i) => (
+                    <div key={i} className="text-green-400">{JSON.stringify(row)}</div>
+                  ))}
+                  {result.evidence.expected_rows.length > 20 && (
+                    <div className="text-gray-600">…{result.evidence.expected_rows.length - 20} more</div>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500 mb-1">Your output ({result.evidence.actual_rows.length} rows)</div>
+                <div className="bg-gray-950 border border-gray-800 rounded p-2 text-xs text-gray-300 font-mono max-h-32 overflow-y-auto space-y-0.5">
+                  {result.evidence.actual_rows.slice(0, 20).map((row, i) => (
+                    <div key={i} className={result.passed ? 'text-green-400' : 'text-red-400'}>
+                      {JSON.stringify(row)}
+                    </div>
+                  ))}
+                  {result.evidence.actual_rows.length > 20 && (
+                    <div className="text-gray-600">…{result.evidence.actual_rows.length - 20} more</div>
+                  )}
+                  {result.evidence.actual_rows.length === 0 && !result.error && (
+                    <div className="text-gray-700 italic">no rows returned</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* LLM coaching narrative */}
+          {result.narrative && (
+            <div className="bg-gray-900 border border-gray-700 rounded-lg p-3">
+              <div className="text-xs text-gray-500 mb-1">Coach</div>
+              <p className="text-sm text-gray-300 leading-relaxed">{result.narrative}</p>
+            </div>
+          )}
+
+          {/* Try again */}
+          <button
+            onClick={() => { setResult(null); setSql('') }}
+            className="text-xs text-gray-500 hover:text-gray-300 underline self-start"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Lesson panel
 // ---------------------------------------------------------------------------
 
@@ -422,6 +634,7 @@ function LessonPanel({
   nodeLabel: string
   difficulty: number
 }) {
+  const [activeTab, setActiveTab] = useState<'lesson' | 'prove'>('lesson')
   const [profile, setProfile] = useState<Profile>({
     depth: 'standard',
     example_domain: 'ecommerce',
@@ -487,79 +700,112 @@ function LessonPanel({
           <span className="text-amber-400 text-xs mt-0.5 shrink-0">{diffStars}</span>
         </div>
 
-        {/* Preference controls */}
-        <div className="flex flex-wrap gap-2 mt-3">
-          {(Object.keys(PROFILE_OPTIONS) as Array<keyof typeof PROFILE_OPTIONS>).map(key => (
-            <div key={key} className="flex flex-col gap-0.5">
-              <label className="text-gray-500 text-xs capitalize">{key.replace('_', ' ')}</label>
-              <select
-                value={profile[key as keyof Profile]}
-                onChange={e => updateProfile(key as keyof Profile, e.target.value)}
-                disabled={loading || !lesson}
-                className="bg-gray-800 border border-gray-600 text-gray-200 text-xs rounded px-2 py-1 disabled:opacity-50"
-              >
-                {PROFILE_OPTIONS[key].map(opt => (
-                  <option key={opt} value={opt}>
-                    {key === 'format' ? FORMAT_LABELS[opt] ?? opt : opt}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ))}
+        {/* Tabs */}
+        <div className="flex gap-1 mt-3 mb-1">
+          <button
+            onClick={() => setActiveTab('lesson')}
+            className={`px-3 py-1 text-xs rounded font-medium transition ${
+              activeTab === 'lesson'
+                ? 'bg-blue-700 text-white'
+                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+            }`}
+          >
+            Lesson
+          </button>
+          <button
+            onClick={() => setActiveTab('prove')}
+            className={`px-3 py-1 text-xs rounded font-medium transition ${
+              activeTab === 'prove'
+                ? 'bg-blue-700 text-white'
+                : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+            }`}
+          >
+            Prove It ✓
+          </button>
         </div>
 
-        {rerenderLoading && (
-          <div className="mt-2 text-xs text-blue-400 animate-pulse">Re-rendering lesson…</div>
-        )}
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1">
-        {loading && (
-          <div className="flex flex-col gap-2 mt-4">
-            <div className="h-3 bg-gray-800 rounded animate-pulse w-3/4" />
-            <div className="h-3 bg-gray-800 rounded animate-pulse w-full" />
-            <div className="h-3 bg-gray-800 rounded animate-pulse w-5/6" />
-            <div className="h-3 bg-gray-800 rounded animate-pulse w-2/3 mt-2" />
-          </div>
-        )}
-
-        {lesson && !loading && (
+        {/* Preference controls — only shown on lesson tab */}
+        {activeTab === 'lesson' && (
           <>
-            {lesson.no_corpus && (
-              <div className="text-xs text-amber-400 bg-amber-950 border border-amber-800 rounded p-2 mb-3">
-                ⚠ No corpus content indexed for this concept.
-              </div>
-            )}
-
-            <div className="lesson-body opacity-100">
-              {renderMarkdown(lesson.lesson)}
-            </div>
-
-            {/* Source citations */}
-            {lesson.sources.length > 0 && (
-              <details className="mt-4 group" open={false}>
-                <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-300 select-none flex items-center gap-1">
-                  <span className="group-open:rotate-90 transition-transform inline-block">▶</span>
-                  &nbsp;Sources ({lesson.sources.length} corpus chunk{lesson.sources.length !== 1 ? 's' : ''})
-                </summary>
-                <div className="mt-2 space-y-2">
-                  {lesson.sources.map((src, i) => (
-                    <div key={i} className="bg-gray-900 border border-gray-700 rounded p-2 text-xs text-gray-400">
-                      <div className="text-gray-600 mb-1">
-                        chunk {src.chunk_idx} · {src.concept_id.replace(/_/g, ' ')}
-                      </div>
-                      <p className="line-clamp-4 leading-relaxed">
-                        {src.text.length > 400 ? src.text.slice(0, 400) + '…' : src.text}
-                      </p>
-                    </div>
-                  ))}
+            <div className="flex flex-wrap gap-2 mt-2">
+              {(Object.keys(PROFILE_OPTIONS) as Array<keyof typeof PROFILE_OPTIONS>).map(key => (
+                <div key={key} className="flex flex-col gap-0.5">
+                  <label className="text-gray-500 text-xs capitalize">{key.replace('_', ' ')}</label>
+                  <select
+                    value={profile[key as keyof Profile]}
+                    onChange={e => updateProfile(key as keyof Profile, e.target.value)}
+                    disabled={loading || !lesson}
+                    className="bg-gray-800 border border-gray-600 text-gray-200 text-xs rounded px-2 py-1 disabled:opacity-50"
+                  >
+                    {PROFILE_OPTIONS[key].map(opt => (
+                      <option key={opt} value={opt}>
+                        {key === 'format' ? FORMAT_LABELS[opt] ?? opt : opt}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-              </details>
+              ))}
+            </div>
+            {rerenderLoading && (
+              <div className="mt-2 text-xs text-blue-400 animate-pulse">Re-rendering lesson…</div>
             )}
           </>
         )}
       </div>
+
+      {/* Tab content */}
+      {activeTab === 'prove' ? (
+        <div className="flex-1 overflow-y-auto">
+          <ProveItPanel key={conceptId} conceptId={conceptId} />
+        </div>
+      ) : (
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1">
+          {loading && (
+            <div className="flex flex-col gap-2 mt-4">
+              <div className="h-3 bg-gray-800 rounded animate-pulse w-3/4" />
+              <div className="h-3 bg-gray-800 rounded animate-pulse w-full" />
+              <div className="h-3 bg-gray-800 rounded animate-pulse w-5/6" />
+              <div className="h-3 bg-gray-800 rounded animate-pulse w-2/3 mt-2" />
+            </div>
+          )}
+
+          {lesson && !loading && (
+            <>
+              {lesson.no_corpus && (
+                <div className="text-xs text-amber-400 bg-amber-950 border border-amber-800 rounded p-2 mb-3">
+                  ⚠ No corpus content indexed for this concept.
+                </div>
+              )}
+
+              <div className="lesson-body opacity-100">
+                {renderMarkdown(lesson.lesson)}
+              </div>
+
+              {/* Source citations */}
+              {lesson.sources.length > 0 && (
+                <details className="mt-4 group" open={false}>
+                  <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-300 select-none flex items-center gap-1">
+                    <span className="group-open:rotate-90 transition-transform inline-block">▶</span>
+                    &nbsp;Sources ({lesson.sources.length} corpus chunk{lesson.sources.length !== 1 ? 's' : ''})
+                  </summary>
+                  <div className="mt-2 space-y-2">
+                    {lesson.sources.map((src, i) => (
+                      <div key={i} className="bg-gray-900 border border-gray-700 rounded p-2 text-xs text-gray-400">
+                        <div className="text-gray-600 mb-1">
+                          chunk {src.chunk_idx} · {src.concept_id.replace(/_/g, ' ')}
+                        </div>
+                        <p className="line-clamp-4 leading-relaxed">
+                          {src.text.length > 400 ? src.text.slice(0, 400) + '…' : src.text}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   )
 }

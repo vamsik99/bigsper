@@ -3,16 +3,19 @@ Provider abstraction. All LLM / embedding access goes through this module.
 
 Providers
 ---------
-fastrouter  default for chat/generation   FASTROUTER_API_KEY + FASTROUTER_BASE_URL
-openai      direct fallback + embeddings  OPENAI_API_KEY
-neysa       default for embeddings        NEYSA_API_KEY + NEYSA_BASE_URL
+neysa       default for chat/generation   NEYSA_API_KEY + NEYSA_BASE_URL
+fastrouter  alternative for chat          FASTROUTER_API_KEY + FASTROUTER_BASE_URL
+openai      embeddings (+ chat fallback)  OPENAI_API_KEY
 
-embed() tries Neysa with a 4-second timeout; falls back to OpenAI on any error or timeout.
+chat() / chat_json() use the "neysa" provider by default (set CHAT_PROVIDER=fastrouter
+to switch).  Neysa thinking models need chat_template_kwargs to suppress the reasoning
+pass — _extra_body() handles this automatically based on the model name.
+
+embed() tries OpenAI; falls back gracefully if no key is set (RAG index is empty).
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -43,9 +46,20 @@ _PROVIDER_CFG: dict[str, dict[str, str | None]] = {
     "neysa": {
         "key_env":     "NEYSA_API_KEY",
         "url_env":     "NEYSA_BASE_URL",
-        "url_default": "https://api.neysa.ai/v1",
+        "url_default": "https://neysa-deepseek-v4flash.pipeshift.com/v1",
     },
 }
+
+# Neysa thinking models emit a slow reasoning pass by default; suppress it.
+_THINKING_OFF: dict[str, dict] = {
+    "deepseek-v4-flash":   {"chat_template_kwargs": {"thinking": False}},
+    "gemma-4-26b-a4b-it":  {"chat_template_kwargs": {"enable_thinking": False}},
+    "qwen3.6-27b":         {"chat_template_kwargs": {"enable_thinking": False}},
+}
+
+
+def _extra_body(model: str) -> dict:
+    return _THINKING_OFF.get(model, {})
 
 
 def get_client(provider: str) -> AsyncOpenAI:
@@ -64,49 +78,47 @@ def get_client(provider: str) -> AsyncOpenAI:
 
 def _model(tier: str) -> str:
     return (
-        os.environ.get("STRONG_MODEL", "gpt-4o")
+        os.environ.get("STRONG_MODEL", "deepseek-v4-flash")
         if tier == "strong"
-        else os.environ.get("CHEAP_MODEL", "gpt-4o-mini")
+        else os.environ.get("CHEAP_MODEL", "deepseek-v4-flash")
     )
 
 
+def _chat_provider() -> str:
+    return os.environ.get("CHAT_PROVIDER", "neysa")
+
+
 async def chat(messages: list[dict], tier: str = "cheap") -> str:
-    """Generate a chat completion via FastRouter. tier='cheap'|'strong'."""
-    resp = await get_client("fastrouter").chat.completions.create(
-        model=_model(tier),
+    """Generate a chat completion. Provider selected by CHAT_PROVIDER env var (default: neysa)."""
+    model = _model(tier)
+    resp = await get_client(_chat_provider()).chat.completions.create(
+        model=model,
         messages=messages,
+        extra_body=_extra_body(model),
     )
     return resp.choices[0].message.content or ""
 
 
 async def chat_json(messages: list[dict], tier: str = "cheap") -> dict:
     """Same as chat(), but enforces JSON output and parses it into a dict."""
-    resp = await get_client("fastrouter").chat.completions.create(
-        model=_model(tier),
+    model = _model(tier)
+    resp = await get_client(_chat_provider()).chat.completions.create(
+        model=model,
         messages=messages,
         response_format={"type": "json_object"},
+        extra_body=_extra_body(model),
     )
     return json.loads(resp.choices[0].message.content or "{}")
 
 
 async def embed(texts: list[str]) -> list[list[float]]:
     """
-    Embed texts via Neysa (4-second timeout).
-    Falls back to OpenAI on any error or timeout. Logs which path ran.
+    Embed texts via OpenAI text-embedding-3-small.
+    Raises if OPENAI_API_KEY is not set (RAG index will be empty but app still boots).
     """
     global _last_embed_provider
     model = os.environ.get("EMBED_MODEL", "text-embedding-3-small")
-    try:
-        resp = await asyncio.wait_for(
-            get_client("neysa").embeddings.create(input=texts, model=model),
-            timeout=4.0,
-        )
-        _last_embed_provider = "neysa"
-        logger.info("embed: neysa (%d texts)", len(texts))
-        return [item.embedding for item in resp.data]
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("embed: neysa failed (%s) — falling back to openai", exc)
-        resp = await get_client("openai").embeddings.create(input=texts, model=model)
-        _last_embed_provider = "openai"
-        logger.info("embed: openai fallback (%d texts)", len(texts))
-        return [item.embedding for item in resp.data]
+    resp = await get_client("openai").embeddings.create(input=texts, model=model)
+    _last_embed_provider = "openai"
+    logger.info("embed: openai (%d texts)", len(texts))
+    return [item.embedding for item in resp.data]

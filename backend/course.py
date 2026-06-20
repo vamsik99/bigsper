@@ -42,6 +42,18 @@ class Verifier(ABC):
         """Grade `answer` against `task`. Must be deterministic when badge_kind == 'verified'."""
         ...
 
+    async def generate_task(
+        self,
+        weak_concepts: list[str],
+        llm,  # backend.llm module — caller injects to avoid circular import
+        course: "Course",
+    ) -> dict[str, Any]:
+        """Generate a practice task dict for the given weak concepts.
+
+        Returns a dict compatible with verify(). Override in course-specific verifiers.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement generate_task.")
+
 
 @dataclass
 class Course:
@@ -118,6 +130,40 @@ class SQLVerifier(Verifier):
         if self.seed_sql_path.exists():
             conn.executescript(self.seed_sql_path.read_text())
         return conn
+
+    async def generate_task(self, weak_concepts: list[str], llm, course) -> dict[str, Any]:
+        """Generate a SQL exercise grounded in the sandbox schema."""
+        concept_ids = weak_concepts[:3] or ["general SQL"]
+        schema = self.schema_text or "(schema not available — check courses/sql/schema.txt)"
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are an SQL instructor generating a deterministic practice exercise.\n\n"
+                    f"Database schema (SQLite):\n{schema}\n\n"
+                    "Return ONLY a JSON object with exactly these keys:\n"
+                    '  "prompt": string — clear question for the student\n'
+                    '  "expected_sql": string — a correct SQL SELECT query (SQLite syntax)\n'
+                    '  "ordered": boolean — true only when row order matters for correctness\n'
+                    "Rules: SELECT only (no DML). Use only tables/columns from the schema above. "
+                    "Ensure expected_sql runs without error and returns at least one row."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Create a practical SQL exercise that tests: {', '.join(concept_ids)}. "
+                    "The question should be answerable with a single SELECT statement."
+                ),
+            },
+        ]
+        data = await llm.chat_json(messages, tier="strong")
+        return {
+            "prompt": data.get("prompt", "Write a SQL SELECT query."),
+            "expected_sql": str(data.get("expected_sql", "SELECT 1")).strip(),
+            "concept_id": concept_ids[0],
+            "ordered": bool(data.get("ordered", False)),
+        }
 
     def verify(self, task: dict[str, Any], answer: str) -> VerifierResult:
         expected_sql: str | None = task.get("expected_sql")

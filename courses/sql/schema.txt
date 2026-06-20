@@ -1,0 +1,33 @@
+SQLite sandbox schema (BigSper SQL Placement Prep)
+
+Table: departments
+  id     INTEGER PRIMARY KEY
+  name   TEXT NOT NULL
+  budget REAL
+
+Table: employees
+  id            INTEGER PRIMARY KEY
+  name          TEXT NOT NULL
+  department_id INTEGER REFERENCES departments(id)   -- NULL means unassigned
+  salary        REAL
+  hire_date     TEXT  -- ISO-8601 (YYYY-MM-DD)
+
+Table: projects
+  id         INTEGER PRIMARY KEY
+  name       TEXT NOT NULL
+  dept_id    INTEGER REFERENCES departments(id)
+  start_date TEXT  -- ISO-8601
+  end_date   TEXT  -- ISO-8601
+  budget     REAL
+
+Table: employee_projects
+  employee_id INTEGER REFERENCES employees(id)
+  project_id  INTEGER REFERENCES projects(id)
+  role        TEXT
+  PRIMARY KEY (employee_id, project_id)
+
+Seed data summary:
+  departments: Engineering (id=1), Marketing (id=2), Sales (id=3)
+  employees: Alice, Bob, Carol, David, Eve, Frank, Grace, Heidi (id=1–8); Heidi has NULL dept
+  projects: Data Platform (id=1), Summer Campaign (id=2), CRM Rollout (id=3)
+  employee_projects: 7 assignments across the three projects

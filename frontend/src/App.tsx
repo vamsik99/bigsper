@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
 const ORIGIN = (import.meta.env.VITE_BACKEND_ORIGIN ?? '').replace(/\/$/, '')
@@ -38,6 +38,13 @@ interface Source {
   text: string
   concept_id: string
   chunk_idx: number
+}
+
+interface WalkthroughStep {
+  title: string
+  body: string
+  code_snippet: string | null
+  highlight: string | null
 }
 
 interface LessonData {
@@ -225,6 +232,75 @@ function stripMarkdownForTTS(text: string): string {
     .replace(/\n+/g, '. ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+// TTS language config — add entries here to support more languages
+const TTS_LANGUAGES = [
+  { code: 'en', label: 'English', browserLang: 'en-US' },
+  { code: 'ta', label: 'Tamil',   browserLang: 'ta-IN' },
+]
+
+/**
+ * Try backend TTS first, fall back to browser SpeechSynthesis, then disable.
+ * Returns a cleanup function (stop audio).
+ */
+async function playTTS(
+  text: string,
+  language: string,
+  onStart: () => void,
+  onEnd: () => void,
+  onError: () => void,
+): Promise<() => void> {
+  const lang = TTS_LANGUAGES.find(l => l.code === language) ?? TTS_LANGUAGES[0]
+  let stopped = false
+
+  // Primary: backend TTS API
+  try {
+    const res = await fetch(`${ORIGIN}/api/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text.slice(0, 2000), language }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = await res.blob()
+    if (stopped) return () => {}
+    const url = URL.createObjectURL(blob)
+    const audio = new Audio(url)
+    audio.onplay  = onStart
+    audio.onended = () => { URL.revokeObjectURL(url); onEnd() }
+    audio.onerror = () => { URL.revokeObjectURL(url); onError() }
+    audio.play().catch(onError)
+    return () => { stopped = true; audio.pause(); URL.revokeObjectURL(url); onEnd() }
+  } catch {
+    // Fallback: browser SpeechSynthesis
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      onError(); return () => {}
+    }
+    try {
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.rate = 0.92
+      utterance.lang = lang.browserLang
+      utterance.onstart = onStart
+      utterance.onend   = onEnd
+      utterance.onerror = onError
+
+      const speak = () => {
+        const voices = window.speechSynthesis.getVoices()
+        const match = voices.find(v => v.lang.startsWith(lang.code === 'ta' ? 'ta' : 'en'))
+        if (match) utterance.voice = match
+        if (!stopped) window.speechSynthesis.speak(utterance)
+      }
+
+      if (window.speechSynthesis.getVoices().length === 0) {
+        window.speechSynthesis.addEventListener('voiceschanged', speak, { once: true })
+      } else {
+        speak()
+      }
+      return () => { stopped = true; window.speechSynthesis.cancel(); onEnd() }
+    } catch {
+      onError(); return () => {}
+    }
+  }
 }
 
 function computeNodePositions(nodes: GraphNode[]): Record<string, { x: number; y: number }> {
@@ -794,6 +870,106 @@ const PROFILE_LABELS: Record<string, Record<string, string>> = {
   format: { worked_example: 'Worked eg.', analogy: 'Analogy', step_by_step: 'Step-by-step' },
 }
 
+// ---------------------------------------------------------------------------
+// Walkthrough stepper — purely client-side once steps are fetched
+// ---------------------------------------------------------------------------
+
+function WalkthroughStepper({
+  steps,
+  onTTS,
+  ttsLanguage,
+  speaking,
+  ttsLoading,
+}: {
+  steps: WalkthroughStep[]
+  onTTS: (text: string) => void
+  ttsLanguage: string
+  speaking: boolean
+  ttsLoading: boolean
+}) {
+  const [idx, setIdx] = useState(0)
+  const total = steps.length
+  const step = steps[Math.min(idx, total - 1)]
+
+  // Reset to first step if steps change
+  useEffect(() => { setIdx(0) }, [steps])
+
+  if (!step) return null
+
+  const progressPct = total > 1 ? Math.round((idx / (total - 1)) * 100) : 100
+  const stepText = [step.title, step.body, step.code_snippet].filter(Boolean).join(' ')
+
+  return (
+    <div className="flex flex-col gap-3 h-full">
+      {/* Progress bar + counter */}
+      <div className="flex items-center gap-2">
+        <div className="flex-1 h-1 bg-gray-800 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-blue-600 rounded-full transition-all duration-300"
+            style={{ width: `${progressPct}%` }}
+          />
+        </div>
+        <span className="text-xs text-gray-500 shrink-0">Step {idx + 1} of {total}</span>
+      </div>
+
+      {/* Step card */}
+      <div className="flex-1 bg-gray-900 border border-gray-700 rounded-xl p-4 flex flex-col gap-3 overflow-y-auto">
+        {step.highlight && (
+          <span className="self-start text-xs font-mono bg-blue-950 text-blue-300 border border-blue-800 px-2 py-0.5 rounded">
+            {step.highlight}
+          </span>
+        )}
+        <h3 className="text-sm font-semibold text-white leading-snug">{step.title}</h3>
+        <p className="text-sm text-gray-300 leading-relaxed">{step.body}</p>
+        {step.code_snippet && (
+          <pre className="bg-gray-950 border border-gray-700 rounded p-3 overflow-x-auto text-xs text-green-300 mt-1">
+            <div className="text-gray-500 text-xs mb-1">sql</div>
+            <code>{step.code_snippet}</code>
+          </pre>
+        )}
+      </div>
+
+      {/* Navigation + TTS */}
+      <div className="flex items-center justify-between">
+        <div className="flex gap-2">
+          <button
+            onClick={() => setIdx(i => Math.max(0, i - 1))}
+            disabled={idx === 0}
+            className="px-3 py-1.5 text-xs rounded-lg border border-gray-700 text-gray-300 hover:border-gray-500 hover:text-white disabled:opacity-30 transition"
+          >
+            ← Back
+          </button>
+          <button
+            onClick={() => setIdx(i => Math.min(total - 1, i + 1))}
+            disabled={idx === total - 1}
+            className="px-3 py-1.5 text-xs rounded-lg bg-blue-700 hover:bg-blue-600 text-white font-medium disabled:opacity-30 transition"
+          >
+            Next →
+          </button>
+        </div>
+        <button
+          onClick={() => onTTS(stripMarkdownForTTS(stepText))}
+          title={speaking ? 'Stop' : `Read aloud (${ttsLanguage})`}
+          disabled={ttsLoading}
+          className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition ${
+            speaking
+              ? 'bg-blue-700 text-white animate-pulse'
+              : ttsLoading
+              ? 'bg-gray-800 text-gray-600 cursor-wait'
+              : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+          }`}
+        >
+          {speaking ? '⏹' : ttsLoading ? '…' : '🔊'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Lesson panel
+// ---------------------------------------------------------------------------
+
 function LessonPanel({
   conceptId,
   nodeLabel,
@@ -808,6 +984,7 @@ function LessonPanel({
   onScorecard?: (conceptId: string, score: number) => void
 }) {
   const [activeTab, setActiveTab] = useState<'lesson' | 'prove'>('lesson')
+  const [readMode, setReadMode] = useState<'read' | 'walkthrough'>('read')
   const [profile, setProfile] = useState<Profile>({
     depth: 'standard',
     example_domain: 'ecommerce',
@@ -817,16 +994,48 @@ function LessonPanel({
   const [loading, setLoading] = useState(false)
   const [rerenderLoading, setRerenderLoading] = useState(false)
   const [rerenderFlash, setRerenderFlash] = useState(false)
+
+  // Walkthrough state — fetched lazily on first "Walkthrough" toggle
+  const [walkthroughSteps, setWalkthroughSteps] = useState<WalkthroughStep[] | null>(null)
+  const [walkthroughLoading, setWalkthroughLoading] = useState(false)
+
+  // TTS state
+  const [ttsLanguage, setTtsLanguage] = useState('en')
   const [speaking, setSpeaking] = useState(false)
-  const ttsAvailable = typeof window !== 'undefined' && 'speechSynthesis' in window
+  const [ttsLoading, setTtsLoading] = useState(false)
+  const [ttsDisabled, setTtsDisabled] = useState(false)
+  const stopTtsRef = useRef<(() => void) | null>(null)
+
+  const stopTTS = useCallback(() => {
+    stopTtsRef.current?.()
+    stopTtsRef.current = null
+    setSpeaking(false)
+    setTtsLoading(false)
+  }, [])
+
+  const handleTTS = useCallback((text: string) => {
+    if (speaking) { stopTTS(); return }
+    setTtsLoading(true)
+    setSpeaking(false)
+    playTTS(
+      text,
+      ttsLanguage,
+      () => { setTtsLoading(false); setSpeaking(true) },
+      () => { setSpeaking(false); setTtsLoading(false) },
+      () => { setSpeaking(false); setTtsLoading(false); setTtsDisabled(true) },
+    ).then(stop => {
+      stopTtsRef.current = stop
+    })
+  }, [speaking, ttsLanguage, stopTTS])
 
   // Fetch fresh lesson when concept changes
   useEffect(() => {
     setLesson(null)
     setLoading(true)
     setRerenderFlash(false)
-    if (ttsAvailable) window.speechSynthesis.cancel()
-    setSpeaking(false)
+    setWalkthroughSteps(null)
+    setReadMode('read')
+    stopTTS()
     fetch(`${ORIGIN}/api/lesson`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -839,10 +1048,36 @@ function LessonPanel({
   }, [conceptId])
 
   // Cancel TTS when switching tabs
+  useEffect(() => { stopTTS() }, [activeTab, stopTTS])
+
+  // Fetch walkthrough lazily when user first switches to walkthrough mode
   useEffect(() => {
-    if (ttsAvailable) window.speechSynthesis.cancel()
-    setSpeaking(false)
-  }, [activeTab, ttsAvailable])
+    if (readMode !== 'walkthrough' || walkthroughSteps || walkthroughLoading || !lesson) return
+    if (lesson.sources.length === 0) {
+      setWalkthroughSteps([{
+        title: 'No corpus content',
+        body: 'Walkthrough requires indexed corpus content for this concept.',
+        code_snippet: null,
+        highlight: null,
+      }])
+      return
+    }
+    setWalkthroughLoading(true)
+    fetch(`${ORIGIN}/api/lesson/walkthrough`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ concept_id: conceptId, profile, sources: lesson.sources }),
+    })
+      .then(r => r.json())
+      .then(data => setWalkthroughSteps(data.steps ?? []))
+      .catch(() => setWalkthroughSteps([{
+        title: 'Walkthrough unavailable',
+        body: 'Could not generate walkthrough. Switch to Read view for the prose lesson.',
+        code_snippet: null,
+        highlight: null,
+      }]))
+      .finally(() => setWalkthroughLoading(false))
+  }, [readMode, walkthroughSteps, walkthroughLoading, lesson, conceptId, profile])
 
   // Re-render when profile changes (after initial load)
   const rerender = useCallback(
@@ -850,7 +1085,9 @@ function LessonPanel({
       if (!lesson) return
       setRerenderLoading(true)
       setRerenderFlash(false)
-      if (ttsAvailable) window.speechSynthesis.cancel()
+      setWalkthroughSteps(null) // invalidate cached walkthrough when profile changes
+      stopTtsRef.current?.()
+      stopTtsRef.current = null
       setSpeaking(false)
       fetch(`${ORIGIN}/api/lesson/rerender`, {
         method: 'POST',
@@ -869,7 +1106,7 @@ function LessonPanel({
         })
         .finally(() => setRerenderLoading(false))
     },
-    [lesson, conceptId, ttsAvailable],
+    [lesson, conceptId, stopTtsRef],
   )
 
   const updateProfile = useCallback(
@@ -880,37 +1117,6 @@ function LessonPanel({
     },
     [profile, rerender],
   )
-
-  const handleTTS = useCallback(() => {
-    if (!lesson || !ttsAvailable) return
-    if (speaking) {
-      window.speechSynthesis.cancel()
-      setSpeaking(false)
-      return
-    }
-    const text = stripMarkdownForTTS(lesson.lesson)
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.rate = 0.92
-    utterance.onend = () => setSpeaking(false)
-    utterance.onerror = () => setSpeaking(false)
-
-    const speak = () => {
-      const voices = window.speechSynthesis.getVoices()
-      const tamilVoice = voices.find(v => v.lang.startsWith('ta'))
-      if (tamilVoice) {
-        utterance.voice = tamilVoice
-        utterance.lang = 'ta-IN'
-      }
-      setSpeaking(true)
-      window.speechSynthesis.speak(utterance)
-    }
-
-    if (window.speechSynthesis.getVoices().length === 0) {
-      window.speechSynthesis.addEventListener('voiceschanged', speak, { once: true })
-    } else {
-      speak()
-    }
-  }, [lesson, speaking, ttsAvailable])
 
   const diffStars = '★'.repeat(difficulty) + '☆'.repeat(5 - difficulty)
 
@@ -961,7 +1167,7 @@ function LessonPanel({
           </button>
         </div>
 
-        {/* Preference pills + TTS — only on lesson tab */}
+        {/* Preference pills + mode toggle + TTS — only on lesson tab */}
         {activeTab === 'lesson' && (
           <div className="mt-2 space-y-1.5">
             {(Object.keys(PROFILE_OPTIONS) as Array<keyof typeof PROFILE_OPTIONS>).map(key => (
@@ -991,30 +1197,76 @@ function LessonPanel({
               </div>
             ))}
 
-            <div className="flex items-center gap-2 pt-0.5">
-              {rerenderLoading && (
-                <span className="flex items-center gap-1 text-xs text-blue-400">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block animate-ping" />
-                  Adapting…
-                </span>
-              )}
-              {rerenderFlash && !rerenderLoading && (
-                <span className="text-xs text-green-400 font-medium">✓ Adapted</span>
-              )}
-              {ttsAvailable && lesson && !loading && (
-                <button
-                  onClick={handleTTS}
-                  title={speaking ? 'Stop reading' : 'Read aloud (Tamil voice if available)'}
-                  className={`ml-auto flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium transition ${
-                    speaking
-                      ? 'bg-blue-700 text-white animate-pulse'
-                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
-                  }`}
-                >
-                  {speaking ? '⏹ Stop' : '🔊 Read aloud'}
-                </button>
-              )}
-            </div>
+            {/* Read / Walkthrough toggle */}
+            {lesson && !loading && (
+              <div className="flex items-center gap-2 pt-1">
+                <div className="flex bg-gray-800 border border-gray-700 rounded-lg p-0.5">
+                  <button
+                    onClick={() => setReadMode('read')}
+                    className={`px-2.5 py-0.5 text-xs rounded-md font-medium transition ${
+                      readMode === 'read'
+                        ? 'bg-gray-600 text-white'
+                        : 'text-gray-400 hover:text-gray-200'
+                    }`}
+                  >
+                    Read
+                  </button>
+                  <button
+                    onClick={() => setReadMode('walkthrough')}
+                    className={`px-2.5 py-0.5 text-xs rounded-md font-medium transition ${
+                      readMode === 'walkthrough'
+                        ? 'bg-gray-600 text-white'
+                        : 'text-gray-400 hover:text-gray-200'
+                    }`}
+                  >
+                    Walkthrough
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-1 ml-auto">
+                  {rerenderLoading && (
+                    <span className="flex items-center gap-1 text-xs text-blue-400">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block animate-ping" />
+                      Adapting…
+                    </span>
+                  )}
+                  {rerenderFlash && !rerenderLoading && (
+                    <span className="text-xs text-green-400 font-medium">✓ Adapted</span>
+                  )}
+
+                  {/* TTS language selector */}
+                  {!ttsDisabled && (
+                    <select
+                      value={ttsLanguage}
+                      onChange={e => setTtsLanguage(e.target.value)}
+                      className="bg-gray-800 border border-gray-700 text-gray-400 text-xs rounded px-1 py-0.5"
+                    >
+                      {TTS_LANGUAGES.map(l => (
+                        <option key={l.code} value={l.code}>{l.label}</option>
+                      ))}
+                    </select>
+                  )}
+
+                  {/* TTS button — only on prose read mode; walkthrough has its own button */}
+                  {readMode === 'read' && !ttsDisabled && (
+                    <button
+                      onClick={() => handleTTS(stripMarkdownForTTS(lesson.lesson))}
+                      title={speaking ? 'Stop' : 'Read aloud'}
+                      disabled={ttsLoading && !speaking}
+                      className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium transition ${
+                        speaking
+                          ? 'bg-blue-700 text-white animate-pulse'
+                          : ttsLoading
+                          ? 'bg-gray-800 text-gray-600 cursor-wait'
+                          : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                      }`}
+                    >
+                      {speaking ? '⏹ Stop' : ttsLoading ? '…' : '🔊'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1041,7 +1293,7 @@ function LessonPanel({
             </div>
           )}
 
-          {lesson && !loading && (
+          {lesson && !loading && readMode === 'read' && (
             <>
               {lesson.no_corpus && (
                 <div className="text-xs text-amber-400 bg-amber-950 border border-amber-800 rounded p-2 mb-3">
@@ -1079,6 +1331,25 @@ function LessonPanel({
                 </details>
               )}
             </>
+          )}
+
+          {/* Walkthrough mode */}
+          {lesson && !loading && readMode === 'walkthrough' && (
+            walkthroughLoading ? (
+              <div className="flex flex-col gap-2 mt-4">
+                <div className="h-3 bg-gray-800 rounded animate-pulse w-1/2" />
+                <div className="h-24 bg-gray-800 rounded animate-pulse w-full mt-2" />
+                <div className="text-xs text-gray-600 mt-1 animate-pulse">Building walkthrough…</div>
+              </div>
+            ) : walkthroughSteps && walkthroughSteps.length > 0 ? (
+              <WalkthroughStepper
+                steps={walkthroughSteps}
+                onTTS={handleTTS}
+                ttsLanguage={ttsLanguage}
+                speaking={speaking}
+                ttsLoading={ttsLoading}
+              />
+            ) : null
           )}
         </div>
       )}

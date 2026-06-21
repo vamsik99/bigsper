@@ -265,6 +265,17 @@ class RerenderRequest(BaseModel):
     sources: list[dict] | None = None
 
 
+class WalkthroughRequest(BaseModel):
+    concept_id: str
+    profile: dict
+    sources: list[dict]  # corpus chunks already retrieved (no extra DB round-trip)
+
+
+class TTSRequest(BaseModel):
+    text: str
+    language: str = "en"
+
+
 @router.get("/course")
 async def course_info():
     """Return active course metadata (id, name, description)."""
@@ -365,6 +376,61 @@ async def lesson_rerender(body: RerenderRequest):
             "no_corpus": False,
             "_from_cache": True,
         }
+
+
+@router.post("/lesson/walkthrough")
+async def lesson_walkthrough(body: WalkthroughRequest):
+    """
+    Generate a step-by-step walkthrough from pre-retrieved corpus sources.
+    All steps are generated in ONE model call (well-researched promise holds).
+    Stepping between steps is client-side — this endpoint is called once per concept/profile.
+    Falls back to a single prose-fallback step on provider outage.
+    """
+    if not body.concept_id or not body.concept_id.strip():
+        raise HTTPException(status_code=422, detail="concept_id must not be empty")
+
+    from backend.engine import lessons
+    try:
+        steps = await lessons.generate_walkthrough(body.concept_id, body.profile, body.sources)
+        return {"concept_id": body.concept_id, "steps": steps}
+    except Exception as exc:
+        logger.warning("lesson/walkthrough failed for %r (%s) — serving fallback", body.concept_id, exc)
+        return {
+            "concept_id": body.concept_id,
+            "steps": [
+                {
+                    "title": "Walkthrough temporarily unavailable",
+                    "body": (
+                        "The AI provider is unreachable. "
+                        "Please switch to the Read view to see the prose lesson."
+                    ),
+                    "code_snippet": None,
+                    "highlight": None,
+                }
+            ],
+            "_from_cache": True,
+        }
+
+
+@router.post("/tts")
+async def tts_endpoint(body: TTSRequest):
+    """
+    Generate TTS audio (mp3) for the given text and language.
+    Returns audio/mpeg bytes. Raises 503 on failure so the frontend can fall back
+    to browser SpeechSynthesis or disable gracefully.
+    Text is truncated to 2 000 characters for safety.
+    """
+    from backend import llm
+
+    safe_text = body.text[:2000].strip()
+    if not safe_text:
+        raise HTTPException(status_code=422, detail="text must not be empty")
+    try:
+        audio_bytes = await llm.tts(safe_text, body.language)
+        return Response(content=audio_bytes, media_type="audio/mpeg")
+    except Exception as exc:
+        logger.warning("tts failed: %s", exc)
+        raise HTTPException(status_code=503, detail=f"TTS unavailable: {exc}")
 
 
 @router.post("/task/generate")

@@ -143,6 +143,32 @@ async def chat_json(messages: list[dict], tier: str = "cheap") -> dict:
         return json.loads(resp.choices[0].message.content or "{}")
 
 
+# TTS language → voice hint (extend this dict to add more languages)
+_TTS_VOICE_MAP: dict[str, str] = {
+    "en": "nova",
+    "ta": "nova",   # Tamil: OpenAI TTS speaks text as-is; Tamil corpus would need translation
+}
+
+
+async def tts(text: str, language: str = "en") -> bytes:
+    """
+    Generate speech audio (mp3 bytes) from text.
+    Provider/model/voice are swappable via TTS_PROVIDER / TTS_MODEL / TTS_VOICE env vars.
+    Raises on failure so callers can fall back gracefully.
+    """
+    provider = os.environ.get("TTS_PROVIDER", "openai")
+    model = os.environ.get("TTS_MODEL", "tts-1")
+    voice = os.environ.get("TTS_VOICE", _TTS_VOICE_MAP.get(language, "nova"))
+    client = get_client(provider)
+    response = await client.audio.speech.create(
+        model=model,
+        voice=voice,
+        input=text,
+        response_format="mp3",
+    )
+    return response.content
+
+
 async def embed(texts: list[str]) -> list[list[float]]:
     """
     Embed texts. Tries Neysa first (4-second timeout); falls back to OpenAI on any error.

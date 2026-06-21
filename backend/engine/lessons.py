@@ -174,6 +174,100 @@ async def fetch_lesson(concept_id: str, profile: dict[str, str]) -> dict[str, An
     }
 
 
+def _build_walkthrough_messages(
+    node: dict[str, Any], profile: dict[str, str], chunks: list[dict[str, Any]]
+) -> list[dict[str, str]]:
+    domain = profile.get("example_domain", "generic")
+    corpus_text = "\n\n---\n\n".join(c["text"] for c in chunks)
+    concept_label = node.get("label", node["id"])
+
+    system = (
+        "You are an expert technical educator creating step-by-step SQL walkthroughs. "
+        "Ground every step strictly in the corpus excerpts provided. "
+        "Do not introduce any information absent from the corpus. "
+        "Return ONLY valid JSON — no markdown fences, no extra keys."
+    )
+
+    user = (
+        f"## Concept: {concept_label}\n"
+        f"{node.get('description', '')}\n\n"
+        f"## Corpus excerpts (sole authorised source)\n\n{corpus_text}\n\n"
+        f"## Task\n"
+        f"Generate a step-by-step walkthrough using {domain} examples where applicable.\n"
+        f"Return JSON with this exact structure (4–7 steps):\n"
+        f'{{"steps":[{{"title":"string","body":"string (under 80 words)",'
+        f'"code_snippet":"SQL string or null","highlight":"key term or null"}}]}}\n'
+        f"Cite the corpus source in the body of the final step as 'Source: {concept_label} corpus'."
+    )
+
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+async def generate_walkthrough(
+    concept_id: str,
+    profile: dict[str, str],
+    sources: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Generate ordered walkthrough steps from existing corpus sources in ONE model call.
+    Returns a list of step dicts: {title, body, code_snippet?, highlight?}.
+    The well-researched promise holds — all content is grounded in the retrieved sources.
+    """
+    from backend import course as _course_mod
+    from backend import llm
+
+    course = _course_mod.get_active()
+    node = _get_concept_node(course, concept_id)
+
+    chunks = [
+        {
+            "text": s["text"],
+            "concept_id": s.get("concept_id", concept_id),
+            "chunk_idx": s.get("chunk_idx", i),
+        }
+        for i, s in enumerate(sources)
+    ]
+
+    if not chunks:
+        return [
+            {
+                "title": "No corpus content",
+                "body": (
+                    f"No corpus chunks are indexed for '{node.get('label', concept_id)}'. "
+                    "Add corpus files and restart to enable walkthroughs."
+                ),
+                "code_snippet": None,
+                "highlight": None,
+            }
+        ]
+
+    messages = _build_walkthrough_messages(node, profile, chunks)
+    data = await llm.chat_json(messages, tier="strong")
+
+    steps: list[dict[str, Any]] = data.get("steps", [])
+    # Normalise each step to ensure required keys present
+    normalised = []
+    for s in steps:
+        if not isinstance(s, dict) or "title" not in s or "body" not in s:
+            continue
+        normalised.append(
+            {
+                "title": str(s.get("title", "")),
+                "body": str(s.get("body", "")),
+                "code_snippet": s.get("code_snippet") or None,
+                "highlight": s.get("highlight") or None,
+            }
+        )
+    return normalised or [
+        {
+            "title": "Walkthrough unavailable",
+            "body": "Could not parse walkthrough steps. Please use the prose lesson above.",
+            "code_snippet": None,
+            "highlight": None,
+        }
+    ]
+
+
 async def rerender_lesson(
     concept_id: str,
     profile: dict[str, str],

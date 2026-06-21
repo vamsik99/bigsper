@@ -3,19 +3,20 @@ Provider abstraction. All LLM / embedding access goes through this module.
 
 Providers
 ---------
-neysa       default for chat/generation   NEYSA_API_KEY + NEYSA_BASE_URL
-fastrouter  alternative for chat          FASTROUTER_API_KEY + FASTROUTER_BASE_URL
-openai      embeddings (+ chat fallback)  OPENAI_API_KEY
+fastrouter  default for chat/generation   FASTROUTER_API_KEY + FASTROUTER_BASE_URL
+openai      direct chat + embedding fallback  OPENAI_API_KEY
+neysa       default for embeddings        NEYSA_API_KEY + NEYSA_BASE_URL
 
-chat() / chat_json() use the "neysa" provider by default (set CHAT_PROVIDER=fastrouter
-to switch).  Neysa thinking models need chat_template_kwargs to suppress the reasoning
-pass — _extra_body() handles this automatically based on the model name.
+chat() / chat_json() use the provider set by CHAT_PROVIDER env var (default: fastrouter).
+On primary provider failure they fall back to OpenAI automatically.
 
-embed() tries OpenAI; falls back gracefully if no key is set (RAG index is empty).
+embed() tries Neysa first with a 4-second timeout; on any error or timeout it falls
+back to OpenAI.  The last provider used is available via last_embed_provider().
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -85,39 +86,85 @@ def _model(tier: str) -> str:
 
 
 def _chat_provider() -> str:
-    return os.environ.get("CHAT_PROVIDER", "neysa")
+    return os.environ.get("CHAT_PROVIDER", "fastrouter")
 
 
 async def chat(messages: list[dict], tier: str = "cheap") -> str:
-    """Generate a chat completion. Provider selected by CHAT_PROVIDER env var (default: neysa)."""
+    """
+    Generate a chat completion.
+    Uses CHAT_PROVIDER (default: fastrouter); falls back to OpenAI on any error.
+    """
     model = _model(tier)
-    resp = await get_client(_chat_provider()).chat.completions.create(
-        model=model,
-        messages=messages,
-        extra_body=_extra_body(model),
-    )
-    return resp.choices[0].message.content or ""
+    provider = _chat_provider()
+    try:
+        resp = await get_client(provider).chat.completions.create(
+            model=model,
+            messages=messages,
+            extra_body=_extra_body(model),
+        )
+        return resp.choices[0].message.content or ""
+    except Exception as exc:
+        if provider == "openai":
+            raise
+        logger.warning("chat: %s failed (%s) — falling back to openai", provider, exc)
+        fallback_model = os.environ.get("OPENAI_FALLBACK_MODEL", "gpt-4o-mini")
+        resp = await get_client("openai").chat.completions.create(
+            model=fallback_model,
+            messages=messages,
+        )
+        return resp.choices[0].message.content or ""
 
 
 async def chat_json(messages: list[dict], tier: str = "cheap") -> dict:
-    """Same as chat(), but enforces JSON output and parses it into a dict."""
+    """
+    Same as chat(), but enforces JSON output and parses it into a dict.
+    Falls back to OpenAI on primary provider failure.
+    """
     model = _model(tier)
-    resp = await get_client(_chat_provider()).chat.completions.create(
-        model=model,
-        messages=messages,
-        response_format={"type": "json_object"},
-        extra_body=_extra_body(model),
-    )
-    return json.loads(resp.choices[0].message.content or "{}")
+    provider = _chat_provider()
+    try:
+        resp = await get_client(provider).chat.completions.create(
+            model=model,
+            messages=messages,
+            response_format={"type": "json_object"},
+            extra_body=_extra_body(model),
+        )
+        return json.loads(resp.choices[0].message.content or "{}")
+    except Exception as exc:
+        if provider == "openai":
+            raise
+        logger.warning("chat_json: %s failed (%s) — falling back to openai", provider, exc)
+        fallback_model = os.environ.get("OPENAI_FALLBACK_MODEL", "gpt-4o-mini")
+        resp = await get_client("openai").chat.completions.create(
+            model=fallback_model,
+            messages=messages,
+            response_format={"type": "json_object"},
+        )
+        return json.loads(resp.choices[0].message.content or "{}")
 
 
 async def embed(texts: list[str]) -> list[list[float]]:
     """
-    Embed texts via OpenAI text-embedding-3-small.
-    Raises if OPENAI_API_KEY is not set (RAG index will be empty but app still boots).
+    Embed texts. Tries Neysa first (4-second timeout); falls back to OpenAI on any error.
+    Logs which provider handled the call; result available via last_embed_provider().
     """
     global _last_embed_provider
     model = os.environ.get("EMBED_MODEL", "text-embedding-3-small")
+
+    neysa_key = os.environ.get("NEYSA_API_KEY", "")
+    if neysa_key:
+        try:
+            neysa_model = os.environ.get("NEYSA_EMBED_MODEL", model)
+            resp = await asyncio.wait_for(
+                get_client("neysa").embeddings.create(input=texts, model=neysa_model),
+                timeout=4.0,
+            )
+            _last_embed_provider = "neysa"
+            logger.info("embed: neysa (%d texts)", len(texts))
+            return [item.embedding for item in resp.data]
+        except Exception as exc:
+            logger.warning("embed: neysa failed (%s) — falling back to openai", exc)
+
     resp = await get_client("openai").embeddings.create(input=texts, model=model)
     _last_embed_provider = "openai"
     logger.info("embed: openai (%d texts)", len(texts))

@@ -50,6 +50,17 @@ async def verify_task(task_id: str, submission: str) -> dict[str, Any]:
     Returns a scorecard: badge (from course.badge), deterministic signals/evidence,
     and an LLM-generated coaching narrative.
     """
+    if not submission or not submission.strip():
+        return {
+            "passed": False,
+            "score": 0.0,
+            "badge": {"label": "Not submitted", "color": "gray", "icon": "—"},
+            "signals": "No SQL submitted. Please write a query and try again.",
+            "evidence": {"expected_rows": [], "actual_rows": []},
+            "narrative": "Please enter a SQL query before submitting.",
+            "error": None,
+        }
+
     course = get_active()
     task = _tasks.get(task_id)
     if task is None:
@@ -83,7 +94,7 @@ async def _narrate(result, task: dict, submission: str) -> str:
         {
             "role": "system",
             "content": (
-                "You are a concise SQL tutor. The student's answer has already been graded "
+                "You are a concise technical tutor. The student's answer has already been graded "
                 "deterministically — do NOT re-evaluate or override the grade. "
                 "Your only job: write 2–3 sentences of coaching that explain what was right "
                 "or what went wrong, and give one concrete tip for improvement if the answer "
@@ -94,7 +105,7 @@ async def _narrate(result, task: dict, submission: str) -> str:
             "role": "user",
             "content": (
                 f"Exercise: {task['prompt']}\n\n"
-                f"Student SQL:\n{submission}\n\n"
+                f"Student answer:\n{submission}\n\n"
                 f"Grading outcome: {status}\n"
                 f"System feedback: {result.feedback}\n\n"
                 "Write your coaching now."

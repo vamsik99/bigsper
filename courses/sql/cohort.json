@@ -1,0 +1,281 @@
+{
+  "students": [
+    {
+      "id": "s001",
+      "name": "Carol Kim",
+      "mastery": {
+        "data_types": 1.0,
+        "select_basics": 1.0,
+        "filtering": 1.0,
+        "sorting": 1.0,
+        "aggregation": 1.0,
+        "grouping": 1.0,
+        "inner_join": 1.0,
+        "dml": 1.0,
+        "outer_join": 1.0,
+        "self_join": 1.0,
+        "subqueries": 1.0,
+        "schema_design": 1.0,
+        "cte": 1.0,
+        "window_basics": 0.25,
+        "normalization": 1.0,
+        "window_advanced": 0.0,
+        "transactions": 0.25
+      },
+      "prove_it": {
+        "concept_id": "window_basics",
+        "score": 0.0,
+        "badge_kind": "verified",
+        "passed": false
+      }
+    },
+    {
+      "id": "s002",
+      "name": "Indira Rao",
+      "mastery": {
+        "data_types": 1.0,
+        "select_basics": 1.0,
+        "filtering": 1.0,
+        "sorting": 1.0,
+        "aggregation": 1.0,
+        "grouping": 1.0,
+        "inner_join": 1.0,
+        "dml": 1.0,
+        "outer_join": 1.0,
+        "subqueries": 1.0,
+        "cte": 1.0,
+        "window_basics": 1.0,
+        "schema_design": 1.0,
+        "normalization": 1.0,
+        "indexes": 0.25,
+        "window_advanced": 0.25,
+        "transactions": 0.0
+      },
+      "prove_it": {
+        "concept_id": "cte",
+        "score": 1.0,
+        "badge_kind": "verified",
+        "passed": true
+      }
+    },
+    {
+      "id": "s003",
+      "name": "Grace Nakamura",
+      "mastery": {
+        "select_basics": 1.0,
+        "filtering": 1.0,
+        "sorting": 1.0,
+        "aggregation": 1.0,
+        "grouping": 1.0,
+        "inner_join": 1.0,
+        "outer_join": 0.25,
+        "subqueries": 1.0,
+        "schema_design": 0.25,
+        "cte": 0.25
+      },
+      "prove_it": {
+        "concept_id": "inner_join",
+        "score": 1.0,
+        "badge_kind": "verified",
+        "passed": true
+      }
+    },
+    {
+      "id": "s004",
+      "name": "Luis Ferreira",
+      "mastery": {
+        "select_basics": 1.0,
+        "filtering": 1.0,
+        "sorting": 1.0,
+        "aggregation": 1.0,
+        "grouping": 1.0,
+        "inner_join": 0.25,
+        "subqueries": 1.0,
+        "cte": 0.25,
+        "window_basics": 0.0,
+        "set_ops": 1.0
+      },
+      "prove_it": {
+        "concept_id": "subqueries",
+        "score": 1.0,
+        "badge_kind": "verified",
+        "passed": true
+      }
+    },
+    {
+      "id": "s005",
+      "name": "Alice Chen",
+      "mastery": {
+        "select_basics": 1.0,
+        "filtering": 1.0,
+        "sorting": 1.0,
+        "aggregation": 1.0,
+        "grouping": 1.0,
+        "inner_join": 0.0,
+        "outer_join": 0.3,
+        "subqueries": 0.3
+      },
+      "prove_it": {
+        "concept_id": "aggregation",
+        "score": 1.0,
+        "badge_kind": "verified",
+        "passed": true
+      }
+    },
+    {
+      "id": "s006",
+      "name": "Bob Martinez",
+      "mastery": {
+        "select_basics": 1.0,
+        "filtering": 1.0,
+        "sorting": 1.0,
+        "aggregation": 0.25,
+        "grouping": 0.0,
+        "inner_join": 1.0,
+        "outer_join": 0.25,
+        "subqueries": 0.0
+      },
+      "prove_it": {
+        "concept_id": "filtering",
+        "score": 1.0,
+        "badge_kind": "verified",
+        "passed": true
+      }
+    },
+    {
+      "id": "s007",
+      "name": "Karen Lee",
+      "mastery": {
+        "select_basics": 1.0,
+        "filtering": 1.0,
+        "sorting": 1.0,
+        "aggregation": 1.0,
+        "grouping": 1.0,
+        "inner_join": 1.0,
+        "outer_join": 1.0,
+        "subqueries": 0.25,
+        "cte": 0.0,
+        "dml": 0.0,
+        "transactions": 0.0
+      },
+      "prove_it": {
+        "concept_id": "subqueries",
+        "score": 0.0,
+        "badge_kind": "verified",
+        "passed": false
+      }
+    },
+    {
+      "id": "s008",
+      "name": "Emma Patel",
+      "mastery": {
+        "select_basics": 1.0,
+        "filtering": 1.0,
+        "aggregation": 1.0,
+        "grouping": 0.25,
+        "inner_join": 1.0,
+        "outer_join": 0.25,
+        "subqueries": 0.0,
+        "schema_design": 0.25
+      },
+      "prove_it": {
+        "concept_id": "grouping",
+        "score": 1.0,
+        "badge_kind": "verified",
+        "passed": true
+      }
+    },
+    {
+      "id": "s009",
+      "name": "Felix Zhang",
+      "mastery": {
+        "data_types": 1.0,
+        "select_basics": 1.0,
+        "filtering": 1.0,
+        "sorting": 1.0,
+        "aggregation": 1.0,
+        "inner_join": 0.25,
+        "outer_join": 0.0,
+        "subqueries": 0.0,
+        "schema_design": 0.25
+      },
+      "prove_it": {
+        "concept_id": "aggregation",
+        "score": 1.0,
+        "badge_kind": "verified",
+        "passed": true
+      }
+    },
+    {
+      "id": "s010",
+      "name": "Henry Brooks",
+      "mastery": {
+        "select_basics": 1.0,
+        "filtering": 0.25,
+        "sorting": 1.0,
+        "aggregation": 0.25,
+        "grouping": 0.0,
+        "inner_join": 1.0,
+        "outer_join": 1.0,
+        "self_join": 0.0,
+        "schema_design": 1.0
+      },
+      "prove_it": {
+        "concept_id": "aggregation",
+        "score": 0.0,
+        "badge_kind": "verified",
+        "passed": false
+      }
+    },
+    {
+      "id": "s011",
+      "name": "David Osei",
+      "mastery": {
+        "select_basics": 1.0,
+        "filtering": 0.0,
+        "sorting": 0.25,
+        "aggregation": 0.3,
+        "inner_join": 0.3
+      },
+      "prove_it": {
+        "concept_id": "select_basics",
+        "score": 1.0,
+        "badge_kind": "verified",
+        "passed": true
+      }
+    },
+    {
+      "id": "s012",
+      "name": "Jake Thompson",
+      "mastery": {
+        "data_types": 0.25,
+        "select_basics": 0.0,
+        "filtering": 0.3,
+        "sorting": 0.3
+      },
+      "prove_it": {
+        "concept_id": "select_basics",
+        "score": 0.0,
+        "badge_kind": "verified",
+        "passed": false
+      }
+    }
+  ],
+  "live_run": {
+    "id": "live",
+    "name": "Instructor (Live Run)",
+    "mastery": {
+      "select_basics": 1.0,
+      "filtering": 1.0,
+      "aggregation": 0.25,
+      "grouping": 0.0,
+      "inner_join": 0.3
+    },
+    "prove_it": {
+      "concept_id": "filtering",
+      "score": 1.0,
+      "badge_kind": "verified",
+      "passed": true
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "nodes": [
+    {
+      "id": "arithmetic",
+      "label": "Arithmetic",
+      "description": "Basic operations: addition, subtraction, multiplication, division, BODMAS.",
+      "difficulty": 1
+    },
+    {
+      "id": "percentages",
+      "label": "Percentages",
+      "description": "Percentage increase/decrease, profit/loss, simple interest, compound interest.",
+      "difficulty": 2
+    },
+    {
+      "id": "ratios",
+      "label": "Ratios & Proportion",
+      "description": "Ratios, proportions, direct/inverse variation, mixtures and alligation.",
+      "difficulty": 2
+    },
+    {
+      "id": "time_speed",
+      "label": "Time, Speed & Distance",
+      "description": "Speed = Distance / Time; relative speed; trains, boats, streams.",
+      "difficulty": 3
+    },
+    {
+      "id": "data_interp",
+      "label": "Data Interpretation",
+      "description": "Reading bar charts, pie charts, tables, line graphs to extract and compute answers.",
+      "difficulty": 3
+    }
+  ],
+  "edges": [
+    { "from": "arithmetic", "to": "percentages" },
+    { "from": "arithmetic", "to": "ratios" },
+    { "from": "ratios", "to": "time_speed" },
+    { "from": "percentages", "to": "data_interp" },
+    { "from": "ratios", "to": "data_interp" }
+  ]
+}

@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -139,14 +139,17 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
+
+router = APIRouter(prefix="/api")
 
 
 def _redirect_uri(request: Request) -> str:
     """Callback URL — override with SCALEKIT_REDIRECT_URI in .env."""
     return os.getenv(
         "SCALEKIT_REDIRECT_URI",
-        str(request.base_url).rstrip("/") + "/auth/callback",
+        str(request.base_url).rstrip("/") + "/api/auth/callback",
     )
 
 
@@ -162,7 +165,7 @@ def _provider_error_response(detail: str) -> dict:
 # Auth endpoints (no-ops when AUTH_ENABLED=false or ScaleKit unavailable)
 # ---------------------------------------------------------------------------
 
-@app.get("/auth/status")
+@router.get("/auth/status")
 async def auth_status(request: Request):
     """Return {auth_enabled, user} for the current session."""
     token = request.cookies.get("bigsper_session")
@@ -170,7 +173,7 @@ async def auth_status(request: Request):
     return {"auth_enabled": _auth.is_active(), "user": user}
 
 
-@app.get("/auth/login")
+@router.get("/auth/login")
 async def auth_login(request: Request):
     """Redirect browser to ScaleKit hosted login. Falls back to / if auth not active."""
     try:
@@ -183,7 +186,7 @@ async def auth_login(request: Request):
     return RedirectResponse(login_url)
 
 
-@app.get("/auth/callback")
+@router.get("/auth/callback")
 async def auth_callback(request: Request, code: str = ""):
     """Exchange ScaleKit auth code, set session cookie, redirect to frontend."""
     if not code:
@@ -207,7 +210,7 @@ async def auth_callback(request: Request, code: str = ""):
     return resp
 
 
-@app.get("/auth/logout")
+@router.get("/auth/logout")
 async def auth_logout(request: Request):
     """Clear session cookie and redirect to frontend."""
     token = request.cookies.get("bigsper_session")
@@ -221,7 +224,7 @@ async def auth_logout(request: Request):
     return resp
 
 
-@app.get("/health")
+@router.get("/health")
 async def health():
     return _startup
 
@@ -262,7 +265,7 @@ class RerenderRequest(BaseModel):
     sources: list[dict] | None = None
 
 
-@app.get("/course")
+@router.get("/course")
 async def course_info():
     """Return active course metadata (id, name, description)."""
     try:
@@ -273,7 +276,7 @@ async def course_info():
         return {"id": "unknown", "name": "BigSper", "description": ""}
 
 
-@app.get("/graph")
+@router.get("/graph")
 async def graph_data():
     """Return the active course concept graph (nodes + edges)."""
     try:
@@ -284,7 +287,7 @@ async def graph_data():
         return {"nodes": [], "edges": [], "error": str(exc)}
 
 
-@app.get("/profile_dimensions")
+@router.get("/profile_dimensions")
 async def profile_dimensions():
     """Return the available profile dimension options."""
     try:
@@ -299,7 +302,7 @@ async def profile_dimensions():
         }
 
 
-@app.post("/lesson")
+@router.post("/lesson")
 async def lesson(body: LessonRequest):
     """
     Retrieve corpus chunks for concept_id and generate a grounded micro-lesson.
@@ -332,7 +335,7 @@ async def lesson(body: LessonRequest):
         }
 
 
-@app.post("/lesson/rerender")
+@router.post("/lesson/rerender")
 async def lesson_rerender(body: RerenderRequest):
     """
     Re-render the lesson for concept_id with a new profile.
@@ -364,7 +367,7 @@ async def lesson_rerender(body: RerenderRequest):
         }
 
 
-@app.post("/task/generate")
+@router.post("/task/generate")
 async def task_generate(body: TaskGenerateRequest):
     """
     Generate a practice task for the given weak concepts.
@@ -389,7 +392,7 @@ async def task_generate(body: TaskGenerateRequest):
         return cached
 
 
-@app.post("/task/verify")
+@router.post("/task/verify")
 async def task_verify(body: TaskVerifyRequest):
     """
     Grade a submission against the stored reference solution.
@@ -416,7 +419,7 @@ async def task_verify(body: TaskVerifyRequest):
         }
 
 
-@app.post("/scorecard")
+@router.post("/scorecard")
 async def scorecard_endpoint(body: ScorecardRequest):
     """
     Grade a submission and return a unified scorecard combining the diagnostic
@@ -458,7 +461,7 @@ async def scorecard_endpoint(body: ScorecardRequest):
         }
 
 
-@app.post("/faculty/report")
+@router.post("/faculty/report")
 async def faculty_report(request: Request):
     """Aggregate cohort data. Requires faculty role when AUTH_ENABLED=true."""
     if _auth.is_active():
@@ -478,7 +481,7 @@ async def faculty_report(request: Request):
         }
 
 
-@app.post("/diagnostic/start")
+@router.post("/diagnostic/start")
 async def diagnostic_start():
     """Begin a new adaptive diagnostic session. Falls back to demo cache on LLM failure."""
     from backend.engine import diagnostic
@@ -496,7 +499,7 @@ async def diagnostic_start():
         return DEMO_DIAGNOSTIC_RESPONSE
 
 
-@app.post("/diagnostic/answer")
+@router.post("/diagnostic/answer")
 async def diagnostic_answer(body: AnswerRequest):
     """
     Submit an answer to the current question.
@@ -538,3 +541,6 @@ async def diagnostic_answer(body: AnswerRequest):
         response["done"] = False
         response["question"] = next_q.model_dump()  # type: ignore[union-attr]
     return response
+
+
+app.include_router(router)

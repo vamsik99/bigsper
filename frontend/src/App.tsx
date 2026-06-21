@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
+const ORIGIN = (import.meta.env.VITE_BACKEND_ORIGIN ?? '').replace(/\/$/, '')
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -266,7 +268,7 @@ function DiagnosticView({
     setLoading(true)
     setStarted(true)
     try {
-      const res = await fetch('/api/diagnostic/start', { method: 'POST' })
+      const res = await fetch(`${ORIGIN}/api/diagnostic/start`, { method: 'POST' })
       const data = await res.json()
       setSessionId(data.session_id)
       setQuestion(data.question)
@@ -282,7 +284,7 @@ function DiagnosticView({
       setSelected(idx)
       setLoading(true)
       try {
-        const res = await fetch('/api/diagnostic/answer', {
+        const res = await fetch(`${ORIGIN}/api/diagnostic/answer`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ session_id: sessionId, answer_index: idx }),
@@ -665,7 +667,7 @@ function ProveItPanel({
     setSql('')
     setTaskError(null)
     setTaskLoading(true)
-    fetch('/api/task/generate', {
+    fetch(`${ORIGIN}/api/task/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ weak_concepts: [conceptId] }),
@@ -681,7 +683,7 @@ function ProveItPanel({
     setRunning(true)
     setScorecard(null)
     try {
-      const res = await fetch('/api/scorecard', {
+      const res = await fetch(`${ORIGIN}/api/scorecard`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -825,7 +827,7 @@ function LessonPanel({
     setRerenderFlash(false)
     if (ttsAvailable) window.speechSynthesis.cancel()
     setSpeaking(false)
-    fetch('/api/lesson', {
+    fetch(`${ORIGIN}/api/lesson`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ concept_id: conceptId, profile }),
@@ -850,7 +852,7 @@ function LessonPanel({
       setRerenderFlash(false)
       if (ttsAvailable) window.speechSynthesis.cancel()
       setSpeaking(false)
-      fetch('/api/lesson/rerender', {
+      fetch(`${ORIGIN}/api/lesson/rerender`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1131,7 +1133,7 @@ function FacultyDashboard() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   useEffect(() => {
-    fetch('/api/faculty/report', { method: 'POST' })
+    fetch(`${ORIGIN}/api/faculty/report`, { method: 'POST' })
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then(setReport)
       .catch(e => setFetchError(String(e)))
@@ -1384,18 +1386,18 @@ export default function App() {
 
   // Fetch course info + graph on mount
   useEffect(() => {
-    fetch('/api/course')
+    fetch(`${ORIGIN}/api/course`)
       .then(r => r.json())
       .then(setCourseInfo)
       .catch(console.error)
-    fetch('/api/graph')
+    fetch(`${ORIGIN}/api/graph`)
       .then(r => r.json())
       .then(setGraphData)
       .catch(console.error)
   }, [])
 
   useEffect(() => {
-    fetch('/api/auth/status')
+    fetch(`${ORIGIN}/api/auth/status`)
       .then(r => r.json())
       .then((s: AuthStatus) => setAuthStatus(s))
       .catch(() => { /* keep default no-auth state */ })
@@ -1448,13 +1450,13 @@ export default function App() {
               <span className={`px-2 py-0.5 rounded font-medium ${authStatus.user.role === 'faculty' ? 'bg-violet-700 text-white' : 'bg-blue-800 text-blue-200'}`}>
                 {authStatus.user.role}
               </span>
-              <a href="/api/auth/logout" className="text-gray-500 hover:text-gray-300 border border-gray-700 rounded px-2 py-0.5">
+              <a href={`${ORIGIN}/api/auth/logout`} className="text-gray-500 hover:text-gray-300 border border-gray-700 rounded px-2 py-0.5">
                 Logout
               </a>
             </div>
           )}
           {authStatus.auth_enabled && !authStatus.user && (
-            <a href="/api/auth/login" className="text-xs bg-violet-700 hover:bg-violet-600 text-white px-3 py-1 rounded-md font-medium transition">
+            <a href={`${ORIGIN}/api/auth/login`} className="text-xs bg-violet-700 hover:bg-violet-600 text-white px-3 py-1 rounded-md font-medium transition">
               Faculty Login
             </a>
           )}
